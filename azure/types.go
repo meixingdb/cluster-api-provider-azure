@@ -21,7 +21,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 )
 
 // PublicIPSpec defines the specification for a Public IP.
@@ -107,6 +107,7 @@ type VNetSpec struct {
 	ResourceGroup string
 	Name          string
 	CIDRs         []string
+	Peerings      []infrav1.VnetPeeringSpec
 }
 
 // RoleAssignmentSpec defines the specification for a Role Assignment.
@@ -133,22 +134,6 @@ const (
 type NSGSpec struct {
 	Name          string
 	SecurityRules infrav1.SecurityRules
-}
-
-// VMSpec defines the specification for a Virtual Machine.
-type VMSpec struct {
-	Name                   string
-	Role                   string
-	NICNames               []string
-	SSHKeyData             string
-	Size                   string
-	Zone                   string
-	Identity               infrav1.VMIdentity
-	OSDisk                 infrav1.OSDisk
-	DataDisks              []infrav1.DataDisk
-	UserAssignedIdentities []infrav1.UserAssignedIdentity
-	SpotVMOptions          *infrav1.SpotVMOptions
-	SecurityProfile        *infrav1.SecurityProfile
 }
 
 // BastionSpec defines the specification for the generic bastion feature.
@@ -188,18 +173,26 @@ type ScaleSetSpec struct {
 
 // TagsSpec defines the specification for a set of tags.
 type TagsSpec struct {
-	Scope      string
-	Tags       infrav1.Tags
+	Scope string
+	Tags  infrav1.Tags
+	// Annotation is the key which stores the last applied tags as value in JSON format.
+	// The last applied tags are used to find out which tags are being managed by CAPZ
+	// and if any has to be deleted by comparing it with the new desired tags
 	Annotation string
 }
 
 // PrivateDNSSpec defines the specification for a private DNS zone.
 type PrivateDNSSpec struct {
-	ZoneName          string
+	ZoneName string
+	Links    []PrivateDNSLinkSpec
+	Records  []infrav1.AddressRecord
+}
+
+// PrivateDNSLinkSpec defines the specification for a virtual network link in a private DNS zone.
+type PrivateDNSLinkSpec struct {
 	VNetName          string
 	VNetResourceGroup string
 	LinkName          string
-	Records           []infrav1.AddressRecord
 }
 
 // AvailabilitySetSpec defines the specification for an availability set.
@@ -207,19 +200,10 @@ type AvailabilitySetSpec struct {
 	Name string
 }
 
-// VMExtensionSpec defines the specification for a VM extension.
-type VMExtensionSpec struct {
+// ExtensionSpec defines the specification for a VM or VMScaleSet extension.
+type ExtensionSpec struct {
 	Name              string
 	VMName            string
-	Publisher         string
-	Version           string
-	ProtectedSettings map[string]string
-}
-
-// VMSSExtensionSpec defines the specification for a VMSS extension.
-type VMSSExtensionSpec struct {
-	Name              string
-	ScaleSetName      string
 	Publisher         string
 	Version           string
 	ProtectedSettings map[string]string
@@ -361,6 +345,12 @@ type ManagedClusterSpec struct {
 
 	// SKU is the SKU of the AKS to be provisioned.
 	SKU *SKU
+
+	// LoadBalancerProfile is the profile of the cluster load balancer.
+	LoadBalancerProfile *LoadBalancerProfile
+
+	// APIServerAccessProfile is the access profile for AKS API server.
+	APIServerAccessProfile *APIServerAccessProfile
 }
 
 // AADProfile is Azure Active Directory configuration to integrate with AKS, for aad authentication.
@@ -379,6 +369,41 @@ type AADProfile struct {
 type SKU struct {
 	// Tier - Tier of a managed cluster SKU.
 	Tier string
+}
+
+// LoadBalancerProfile - Profile of the cluster load balancer.
+type LoadBalancerProfile struct {
+	// Load balancer profile must specify at most one of ManagedOutboundIPs, OutboundIPPrefixes and OutboundIPs.
+	// By default the AKS cluster automatically creates a public IP in the AKS-managed infrastructure resource group and assigns it to the load balancer outbound pool.
+	// Alternatively, you can assign your own custom public IP or public IP prefix at cluster creation time.
+	// See https://docs.microsoft.com/en-us/azure/aks/load-balancer-standard#provide-your-own-outbound-public-ips-or-prefixes
+
+	// ManagedOutboundIPs - Desired managed outbound IPs for the cluster load balancer.
+	ManagedOutboundIPs *int32
+
+	// OutboundIPPrefixes - Desired outbound IP Prefix resources for the cluster load balancer.
+	OutboundIPPrefixes []string
+
+	// OutboundIPs - Desired outbound IP resources for the cluster load balancer.
+	OutboundIPs []string
+
+	// AllocatedOutboundPorts - Desired number of allocated SNAT ports per VM. Allowed values must be in the range of 0 to 64000 (inclusive). The default value is 0 which results in Azure dynamically allocating ports.
+	AllocatedOutboundPorts *int32
+
+	// IdleTimeoutInMinutes - Desired outbound flow idle timeout in minutes. Allowed values must be in the range of 4 to 120 (inclusive). The default value is 30 minutes.
+	IdleTimeoutInMinutes *int32
+}
+
+// APIServerAccessProfile is the access profile for AKS API server.
+type APIServerAccessProfile struct {
+	// AuthorizedIPRanges - Authorized IP Ranges to kubernetes API server.
+	AuthorizedIPRanges []string
+	// EnablePrivateCluster - Whether to create the cluster as a private cluster or not.
+	EnablePrivateCluster *bool
+	// PrivateDNSZone - Private dns zone mode for private cluster.
+	PrivateDNSZone *string
+	// EnablePrivateClusterPublicFQDN - Whether to create additional public FQDN for private cluster or not.
+	EnablePrivateClusterPublicFQDN *bool
 }
 
 // AgentPoolSpec contains agent pool specification details.
@@ -409,4 +434,40 @@ type AgentPoolSpec struct {
 
 	// Mode represents mode of an agent pool. Possible values include: 'System', 'User'.
 	Mode string
+
+	// Max count for auto scaling
+	MaxCount *int32 `json:"maxCount,omitempty"`
+
+	// Min count for auto scaling
+	MinCount *int32 `json:"minCount,omitempty"`
+
+	// Enable auto scaling
+	EnableAutoScaling *bool `json:"EnableAutoScaling,omitempty"`
+
+	// Enable FIPS node image
+	EnableFIPS *bool `json:"EnableFIPS,omitempty"`
+
+	// Enable node public IP
+	EnableNodePublicIP *bool `json:"EnableNodePublicIP,omitempty"`
+
+	// Node labels
+	NodeLabels map[string]*string `json:"NodeLabels,omitempty"`
+
+	// Node taints
+	NodeTaints []string `json:"NodeTaints,omitempty"`
+
+	// Node OS disk type
+	OsDiskType *string `json:"OsDiskType,omitempty"`
+
+	// AvailabilityZones - Availability zones for nodes. Must use VirtualMachineScaleSets AgentPoolType.
+	AvailabilityZones []string `json:"availabilityZones,omitempty"`
+
+	// ScaleSetPriority - ScaleSetPriority to be used to specify virtual machine scale set priority. Default to regular. Possible values include: 'Spot', 'Regular'
+	ScaleSetPriority *string `json:"scaleSetPriority,omitempty"`
+
+	// MaxPods - Maximum number of pods that can run on a node.
+	MaxPods *int32 `json:"maxPods,omitempty"`
+
+	// KubeletConfig - KubeletConfig specifies the configuration of kubelet on agent nodes.
+	KubeletConfig *infrav1.KubeletConfig `json:"kubeletConfig,omitempty"`
 }

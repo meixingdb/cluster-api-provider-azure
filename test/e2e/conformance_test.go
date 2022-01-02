@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blang/semver"
+
 	"sigs.k8s.io/cluster-api-provider-azure/test/e2e/kubernetes/node"
 
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,9 +105,7 @@ var _ = Describe("Conformance Tests", func() {
 		kubernetesVersion := e2eConfig.GetVariable(capi_e2e.KubernetesVersion)
 		flavor := clusterctl.DefaultFlavor
 		if isWindows(kubetestConfigFilePath) {
-			flavor = "windows"
-			// conformance for windows doesn't require any linux worker machines.
-			Expect(os.Setenv("LINUX_WORKER_MACHINE_COUNT", "0")).To(Succeed())
+			flavor = getWindowsFlavor()
 		}
 
 		// clusters with CI artifacts or PR artifacts are based on a known CI version
@@ -122,12 +122,34 @@ var _ = Describe("Conformance Tests", func() {
 			}
 
 			if isWindows(kubetestConfigFilePath) {
-				flavor = flavor + "-windows"
+				flavor = flavor + "-" + getWindowsFlavor()
 			}
 		}
 
-		workerMachineCount, err := strconv.ParseInt(e2eConfig.GetVariable("CONFORMANCE_WORKER_MACHINE_COUNT"), 10, 64)
+		// Set the worker counts for conformance tests that use Windows
+		// This is a work around until we can update cluster-api test framework to be aware of windows node counts.
+		conformanceNodeCount := e2eConfig.GetVariable("CONFORMANCE_WORKER_MACHINE_COUNT")
+		numOfConformanceNodes, err := strconv.ParseInt(conformanceNodeCount, 10, 64)
 		Expect(err).NotTo(HaveOccurred())
+
+		linuxWorkerMachineCount := numOfConformanceNodes
+		if isWindows(kubetestConfigFilePath) {
+			Expect(os.Setenv("WINDOWS_WORKER_MACHINE_COUNT", conformanceNodeCount)).To(Succeed())
+
+			// Conformance for windows doesn't require any linux worker machines.
+			// The templates use WORKER_MACHINE_COUNT for linux machines for backwards compatibility so clear it
+			linuxWorkerMachineCount = 0
+
+			// Can only enable HostProcessContainers Feature gate in versions that know about it.
+			v122 := semver.MustParse("1.22.0")
+			v, err := semver.ParseTolerant(kubernetesVersion)
+			Expect(err).NotTo(HaveOccurred())
+			if v.GTE(v122) {
+				// Opt into using WindowsHostProcessContainers
+				Expect(os.Setenv("K8S_FEATURE_GATES", "WindowsHostProcessContainers=true")).To(Succeed())
+			}
+		}
+
 		controlPlaneMachineCount, err := strconv.ParseInt(e2eConfig.GetVariable("CONFORMANCE_CONTROL_PLANE_MACHINE_COUNT"), 10, 64)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -144,7 +166,7 @@ var _ = Describe("Conformance Tests", func() {
 					ClusterName:              clusterName,
 					KubernetesVersion:        kubernetesVersion,
 					ControlPlaneMachineCount: pointer.Int64Ptr(controlPlaneMachineCount),
-					WorkerMachineCount:       pointer.Int64Ptr(workerMachineCount),
+					WorkerMachineCount:       pointer.Int64Ptr(linuxWorkerMachineCount),
 				},
 				WaitForClusterIntervals:      e2eConfig.GetIntervals(specName, "wait-cluster"),
 				WaitForControlPlaneIntervals: e2eConfig.GetIntervals(specName, "wait-control-plane"),
@@ -183,7 +205,7 @@ var _ = Describe("Conformance Tests", func() {
 			err := kubetest.Run(context.Background(),
 				kubetest.RunInput{
 					ClusterProxy:         workloadProxy,
-					NumberOfNodes:        int(workerMachineCount),
+					NumberOfNodes:        int(numOfConformanceNodes),
 					ConfigFilePath:       kubetestConfigFilePath,
 					KubeTestRepoListPath: repoList,
 					ConformanceImage:     e2eConfig.GetVariable("CONFORMANCE_IMAGE"),
@@ -219,6 +241,17 @@ var _ = Describe("Conformance Tests", func() {
 	})
 
 })
+
+// getWindowsFlavor helps choose the correct deployment files. Windows has multiple OS and runtime options that need
+// to be run for conformance.  Current valid options are blank (dockershim) and containerd.  In future will have options
+// for OS version
+func getWindowsFlavor() string {
+	additionalWindowsFlavor := os.Getenv("WINDOWS_FLAVOR")
+	if additionalWindowsFlavor != "" {
+		return "windows" + "-" + additionalWindowsFlavor
+	}
+	return "windows"
+}
 
 func isWindows(kubetestConfigFilePath string) bool {
 	return strings.Contains(kubetestConfigFilePath, "windows")

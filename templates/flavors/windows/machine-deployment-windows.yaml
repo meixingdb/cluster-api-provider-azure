@@ -1,5 +1,5 @@
 ---
-apiVersion: cluster.x-k8s.io/v1alpha4
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
   name: "${CLUSTER_NAME}-md-win"
@@ -15,19 +15,24 @@ spec:
       bootstrap:
         configRef:
           name: "${CLUSTER_NAME}-md-win"
-          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
       infrastructureRef:
         name: "${CLUSTER_NAME}-md-win"
-        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
         kind: AzureMachineTemplate
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
 kind: AzureMachineTemplate
 metadata:
   name: "${CLUSTER_NAME}-md-win"
+  annotations:
+    runtime: dockershim
 spec:
   template:
+    metadata:
+      annotations:
+        runtime: dockershim
     spec:
       vmSize: ${AZURE_NODE_MACHINE_TYPE}
       osDisk:
@@ -37,7 +42,7 @@ spec:
           storageAccountType: "Premium_LRS"
       sshPublicKey: ${AZURE_SSH_PUBLIC_KEY_B64:=""}
 ---
-apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
 kind: KubeadmConfigTemplate
 metadata:
   name: "${CLUSTER_NAME}-md-win"
@@ -60,7 +65,6 @@ spec:
             cloud-provider: azure
             cloud-config: 'c:/k/azure.json'
             azure-container-registry-config: 'c:/k/azure.json'
-            pod-infra-container-image: "mcr.microsoft.com/oss/kubernetes/pause:1.4.1"
       files:
       - contentFrom:
           secret:

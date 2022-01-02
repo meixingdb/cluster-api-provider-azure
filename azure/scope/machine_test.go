@@ -29,8 +29,8 @@ import (
 	"k8s.io/utils/pointer"
 	"sigs.k8s.io/cluster-api-provider-azure/azure"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 )
 
 func TestMachineScope_Name(t *testing.T) {
@@ -394,10 +394,10 @@ func TestMachineScope_VMExtensionSpecs(t *testing.T) {
 	tests := []struct {
 		name         string
 		machineScope MachineScope
-		want         []azure.VMExtensionSpec
+		want         []azure.ExtensionSpec
 	}{
 		{
-			name: "If OS type is Linux and cloud is AzurePublicCloud, it returns VMExtensionSpec",
+			name: "If OS type is Linux and cloud is AzurePublicCloud, it returns ExtensionSpec",
 			machineScope: MachineScope{
 				Machine: &clusterv1.Machine{},
 				AzureMachine: &infrav1.AzureMachine{
@@ -420,20 +420,46 @@ func TestMachineScope_VMExtensionSpecs(t *testing.T) {
 					},
 				},
 			},
-			want: []azure.VMExtensionSpec{
+			want: []azure.ExtensionSpec{
 				{
 					Name:      "CAPZ.Linux.Bootstrapping",
 					VMName:    "machine-name",
 					Publisher: "Microsoft.Azure.ContainerUpstream",
 					Version:   "1.0",
 					ProtectedSettings: map[string]string{
-						"commandToExecute": azure.BootstrapExtensionCommand(),
+						"commandToExecute": azure.LinuxBootstrapExtensionCommand,
 					},
 				},
 			},
 		},
 		{
-			name: "If OS type is not Linux and cloud is AzurePublicCloud, it returns empty",
+			name: "If OS type is Linux and cloud is not AzurePublicCloud, it returns empty",
+			machineScope: MachineScope{
+				Machine: &clusterv1.Machine{},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: "Linux",
+						},
+					},
+				},
+				ClusterScoper: &ClusterScope{
+					AzureClients: AzureClients{
+						EnvironmentSettings: auth.EnvironmentSettings{
+							Environment: autorestazure.Environment{
+								Name: autorestazure.USGovernmentCloud.Name,
+							},
+						},
+					},
+				},
+			},
+			want: []azure.ExtensionSpec{},
+		},
+		{
+			name: "If OS type is Windows and cloud is AzurePublicCloud, it returns ExtensionSpec",
 			machineScope: MachineScope{
 				Machine: &clusterv1.Machine{},
 				AzureMachine: &infrav1.AzureMachine{
@@ -456,10 +482,20 @@ func TestMachineScope_VMExtensionSpecs(t *testing.T) {
 					},
 				},
 			},
-			want: []azure.VMExtensionSpec{},
+			want: []azure.ExtensionSpec{
+				{
+					Name:      "CAPZ.Windows.Bootstrapping",
+					VMName:    "machine-name",
+					Publisher: "Microsoft.Azure.ContainerUpstream",
+					Version:   "1.0",
+					ProtectedSettings: map[string]string{
+						"commandToExecute": azure.WindowsBootstrapExtensionCommand,
+					},
+				},
+			},
 		},
 		{
-			name: "If OS type is Linux and cloud is not AzurePublicCloud, it returns empty",
+			name: "If OS type is Windows and cloud is not AzurePublicCloud, it returns empty",
 			machineScope: MachineScope{
 				Machine: &clusterv1.Machine{},
 				AzureMachine: &infrav1.AzureMachine{
@@ -482,7 +518,59 @@ func TestMachineScope_VMExtensionSpecs(t *testing.T) {
 					},
 				},
 			},
-			want: []azure.VMExtensionSpec{},
+			want: []azure.ExtensionSpec{},
+		},
+		{
+			name: "If OS type is not Linux or Windows and cloud is AzurePublicCloud, it returns empty",
+			machineScope: MachineScope{
+				Machine: &clusterv1.Machine{},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: "Other",
+						},
+					},
+				},
+				ClusterScoper: &ClusterScope{
+					AzureClients: AzureClients{
+						EnvironmentSettings: auth.EnvironmentSettings{
+							Environment: autorestazure.Environment{
+								Name: autorestazure.PublicCloud.Name,
+							},
+						},
+					},
+				},
+			},
+			want: []azure.ExtensionSpec{},
+		},
+		{
+			name: "If OS type is not Windows or Linux and cloud is not AzurePublicCloud, it returns empty",
+			machineScope: MachineScope{
+				Machine: &clusterv1.Machine{},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: "Other",
+						},
+					},
+				},
+				ClusterScoper: &ClusterScope{
+					AzureClients: AzureClients{
+						EnvironmentSettings: auth.EnvironmentSettings{
+							Environment: autorestazure.Environment{
+								Name: autorestazure.USGovernmentCloud.Name,
+							},
+						},
+					},
+				},
+			},
+			want: []azure.ExtensionSpec{},
 		},
 	}
 	for _, tt := range tests {
@@ -864,7 +952,58 @@ func TestMachineScope_AvailabilitySet(t *testing.T) {
 			wantAvailabilitySetExistence: true,
 		},
 		{
-			name: "returns empty and false if AvailabilitySet is enabled but worker machine is not part of machine deployment",
+			name: "returns AvailabilitySet name and true if AvailabilitySet is enabled for worker machine which is part of machine set",
+			machineScope: MachineScope{
+
+				ClusterScoper: &ClusterScope{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+					AzureCluster: &infrav1.AzureCluster{
+						Status: infrav1.AzureClusterStatus{},
+					},
+				},
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							clusterv1.MachineSetLabelName: "foo-machine-set",
+						},
+					},
+				},
+			},
+			wantAvailabilitySetName:      "cluster_foo-machine-set-as",
+			wantAvailabilitySetExistence: true,
+		},
+		{
+			name: "returns AvailabilitySet name and true if AvailabilitySet is enabled for worker machine and machine deployment name takes precedence over machine set name",
+			machineScope: MachineScope{
+
+				ClusterScoper: &ClusterScope{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+					AzureCluster: &infrav1.AzureCluster{
+						Status: infrav1.AzureClusterStatus{},
+					},
+				},
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Labels: map[string]string{
+							clusterv1.MachineDeploymentLabelName: "foo-machine-deployment",
+							clusterv1.MachineSetLabelName:        "foo-machine-set",
+						},
+					},
+				},
+			},
+			wantAvailabilitySetName:      "cluster_foo-machine-deployment-as",
+			wantAvailabilitySetExistence: true,
+		},
+		{
+			name: "returns empty and false if AvailabilitySet is enabled but worker machine is not part of machine deployment or machine set",
 			machineScope: MachineScope{
 
 				ClusterScoper: &ClusterScope{
@@ -972,7 +1111,7 @@ func TestMachineScope_GetVMImage(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "if no image is specified and os specified is windows, returns windows image",
+			name: "if no image is specified and os specified is windows with version below 1.22, returns windows dockershim image",
 			machineScope: MachineScope{
 				Logger: klogr.New(),
 				Machine: &clusterv1.Machine{
@@ -995,10 +1134,132 @@ func TestMachineScope_GetVMImage(t *testing.T) {
 				},
 			},
 			want: func() *infrav1.Image {
-				image, _ := azure.GetDefaultWindowsImage("1.20.1")
+				image, _ := azure.GetDefaultWindowsImage("1.20.1", "dockershim")
 				return image
 			}(),
 			wantErr: false,
+		},
+		{
+			name: "if no image is specified and os specified is windows with version is 1.22+ with no annotation, returns windows containerd image",
+			machineScope: MachineScope{
+				Logger: klogr.New(),
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: clusterv1.MachineSpec{
+						Version: pointer.String("1.22.1"),
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: azure.WindowsOS,
+						},
+					},
+				},
+			},
+			want: func() *infrav1.Image {
+				image, _ := azure.GetDefaultWindowsImage("1.22.1", "containerd")
+				return image
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "if no image is specified and os specified is windows with version is 1.22+ with annotation dockershim, returns windows dockershim image",
+			machineScope: MachineScope{
+				Logger: klogr.New(),
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: clusterv1.MachineSpec{
+						Version: pointer.String("1.22.1"),
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+						Annotations: map[string]string{
+							"runtime": "dockershim",
+						},
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: azure.WindowsOS,
+						},
+					},
+				},
+			},
+			want: func() *infrav1.Image {
+				image, _ := azure.GetDefaultWindowsImage("1.22.1", "dockershim")
+				return image
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "if no image is specified and os specified is windows with version is less and 1.22 with annotation dockershim, returns windows dockershim image",
+			machineScope: MachineScope{
+				Logger: klogr.New(),
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: clusterv1.MachineSpec{
+						Version: pointer.String("1.21.1"),
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+						Annotations: map[string]string{
+							"runtime": "dockershim",
+						},
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: azure.WindowsOS,
+						},
+					},
+				},
+			},
+			want: func() *infrav1.Image {
+				image, _ := azure.GetDefaultWindowsImage("1.21.1", "dockershim")
+				return image
+			}(),
+			wantErr: false,
+		},
+		{
+			name: "if no image is specified and os specified is windows with version is less and 1.22 with annotation containerd, returns error",
+			machineScope: MachineScope{
+				Logger: klogr.New(),
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+					},
+					Spec: clusterv1.MachineSpec{
+						Version: pointer.String("1.21.1"),
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine-name",
+						Annotations: map[string]string{
+							"runtime": "containerd",
+						},
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							OSType: azure.WindowsOS,
+						},
+					},
+				},
+			},
+			want:    nil,
+			wantErr: true,
 		},
 		{
 			name: "if no image and OS is specified, returns linux image",
@@ -1065,7 +1326,7 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 							Namespace: "default",
 							OwnerReferences: []metav1.OwnerReference{
 								{
-									APIVersion: "cluster.x-k8s.io/v1alpha4",
+									APIVersion: "cluster.x-k8s.io/v1beta1",
 									Kind:       "Cluster",
 									Name:       "cluster",
 								},
@@ -1144,7 +1405,7 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 							Namespace: "default",
 							OwnerReferences: []metav1.OwnerReference{
 								{
-									APIVersion: "cluster.x-k8s.io/v1alpha4",
+									APIVersion: "cluster.x-k8s.io/v1beta1",
 									Kind:       "Cluster",
 									Name:       "cluster",
 								},
@@ -1226,7 +1487,7 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 							Namespace: "default",
 							OwnerReferences: []metav1.OwnerReference{
 								{
-									APIVersion: "cluster.x-k8s.io/v1alpha4",
+									APIVersion: "cluster.x-k8s.io/v1beta1",
 									Kind:       "Cluster",
 									Name:       "cluster",
 								},
@@ -1306,7 +1567,7 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 							Namespace: "default",
 							OwnerReferences: []metav1.OwnerReference{
 								{
-									APIVersion: "cluster.x-k8s.io/v1alpha4",
+									APIVersion: "cluster.x-k8s.io/v1beta1",
 									Kind:       "Cluster",
 									Name:       "cluster",
 								},
@@ -1389,7 +1650,7 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 							Namespace: "default",
 							OwnerReferences: []metav1.OwnerReference{
 								{
-									APIVersion: "cluster.x-k8s.io/v1alpha4",
+									APIVersion: "cluster.x-k8s.io/v1beta1",
 									Kind:       "Cluster",
 									Name:       "cluster",
 								},
@@ -1461,6 +1722,161 @@ func TestMachineScope_NICSpecs(t *testing.T) {
 			gotNicSpecs := tt.machineScope.NICSpecs()
 			if !reflect.DeepEqual(gotNicSpecs, tt.want) {
 				t.Errorf("NICSpecs(), gotNicSpecs = %v, want %v", gotNicSpecs, tt.want)
+			}
+		})
+	}
+}
+
+func TestDiskSpecs(t *testing.T) {
+	testcases := []struct {
+		name         string
+		machineScope MachineScope
+		want         []azure.DiskSpec
+	}{
+		{
+			name: "only os disk",
+			machineScope: MachineScope{
+				ClusterScoper: &ClusterScope{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+					AzureCluster: &infrav1.AzureCluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "my-azure-machine",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							DiskSizeGB: to.Int32Ptr(30),
+							OSType:     "Linux",
+						},
+					},
+				},
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine",
+					},
+				},
+			},
+			want: []azure.DiskSpec{
+				{
+					Name: "my-azure-machine_OSDisk",
+				},
+			},
+		},
+		{
+			name: "os and data disks",
+			machineScope: MachineScope{
+				ClusterScoper: &ClusterScope{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+					AzureCluster: &infrav1.AzureCluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "my-azure-machine",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							DiskSizeGB: to.Int32Ptr(30),
+							OSType:     "Linux",
+						},
+						DataDisks: []infrav1.DataDisk{
+							{
+								NameSuffix: "etcddisk",
+							},
+						},
+					},
+				},
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine",
+					},
+				},
+			},
+			want: []azure.DiskSpec{
+				{
+					Name: "my-azure-machine_OSDisk",
+				},
+				{
+					Name: "my-azure-machine_etcddisk",
+				},
+			},
+		}, {
+			name: "os and multiple data disks",
+			machineScope: MachineScope{
+				ClusterScoper: &ClusterScope{
+					Cluster: &clusterv1.Cluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+					AzureCluster: &infrav1.AzureCluster{
+						ObjectMeta: metav1.ObjectMeta{
+							Name: "cluster",
+						},
+					},
+				},
+				AzureMachine: &infrav1.AzureMachine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "my-azure-machine",
+					},
+					Spec: infrav1.AzureMachineSpec{
+						OSDisk: infrav1.OSDisk{
+							DiskSizeGB: to.Int32Ptr(30),
+							OSType:     "Linux",
+						},
+						DataDisks: []infrav1.DataDisk{
+							{
+								NameSuffix: "etcddisk",
+							},
+							{
+								NameSuffix: "otherdisk",
+							},
+						},
+					},
+				},
+				Machine: &clusterv1.Machine{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "machine",
+					},
+				},
+			},
+			want: []azure.DiskSpec{
+				{
+					Name: "my-azure-machine_OSDisk",
+				},
+				{
+					Name: "my-azure-machine_etcddisk",
+				},
+				{
+					Name: "my-azure-machine_otherdisk",
+				},
+			},
+		},
+	}
+
+	for _, tt := range testcases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := tt.machineScope.DiskSpecs()
+			if !reflect.DeepEqual(result, tt.want) {
+				t.Errorf("DiskSpecs(), DiskSpecs = %v, want %v", result, tt.want)
 			}
 		})
 	}

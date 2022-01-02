@@ -19,27 +19,29 @@ package scope
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
 
 	"github.com/Azure/go-autorest/autorest"
+	"github.com/Azure/go-autorest/autorest/to"
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2/klogr"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
-	expv1 "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
+	expv1 "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	capiexputil "sigs.k8s.io/cluster-api/exp/util"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/cluster-api/util/secret"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/azure"
 	"sigs.k8s.io/cluster-api-provider-azure/azure/services/groups"
-	infrav1exp "sigs.k8s.io/cluster-api-provider-azure/exp/api/v1alpha4"
+	infrav1exp "sigs.k8s.io/cluster-api-provider-azure/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/util/futures"
 )
 
@@ -118,7 +120,7 @@ type ManagedControlPlaneScope struct {
 	InfraMachinePool *infrav1exp.AzureManagedMachinePool
 	PatchTarget      client.Object
 
-	SystemNodePools []infrav1exp.AzureManagedMachinePool
+	AllNodePools []infrav1exp.AzureManagedMachinePool
 }
 
 // ResourceGroup returns the managed control plane's resource group.
@@ -337,6 +339,11 @@ func (s *ManagedControlPlaneScope) CloudProviderConfigOverrides() *infrav1.Cloud
 	return nil
 }
 
+// FailureDomains returns the failure domains for the cluster.
+func (s *ManagedControlPlaneScope) FailureDomains() []string {
+	return []string{}
+}
+
 // ManagedClusterSpec returns the managed cluster spec.
 func (s *ManagedControlPlaneScope) ManagedClusterSpec() (azure.ManagedClusterSpec, error) {
 	decodedSSHPublicKey, err := base64.StdEncoding.DecodeString(s.ControlPlane.Spec.SSHPublicKey)
@@ -422,16 +429,34 @@ func (s *ManagedControlPlaneScope) ManagedClusterSpec() (azure.ManagedClusterSpe
 		}
 	}
 
+	if s.ControlPlane.Spec.LoadBalancerProfile != nil {
+		managedClusterSpec.LoadBalancerProfile = &azure.LoadBalancerProfile{
+			ManagedOutboundIPs:     s.ControlPlane.Spec.LoadBalancerProfile.ManagedOutboundIPs,
+			OutboundIPPrefixes:     s.ControlPlane.Spec.LoadBalancerProfile.OutboundIPPrefixes,
+			OutboundIPs:            s.ControlPlane.Spec.LoadBalancerProfile.OutboundIPs,
+			AllocatedOutboundPorts: s.ControlPlane.Spec.LoadBalancerProfile.AllocatedOutboundPorts,
+			IdleTimeoutInMinutes:   s.ControlPlane.Spec.LoadBalancerProfile.IdleTimeoutInMinutes,
+		}
+	}
+
+	if s.ControlPlane.Spec.APIServerAccessProfile != nil {
+		managedClusterSpec.APIServerAccessProfile = &azure.APIServerAccessProfile{
+			AuthorizedIPRanges:             s.ControlPlane.Spec.APIServerAccessProfile.AuthorizedIPRanges,
+			EnablePrivateCluster:           s.ControlPlane.Spec.APIServerAccessProfile.EnablePrivateCluster,
+			PrivateDNSZone:                 s.ControlPlane.Spec.APIServerAccessProfile.PrivateDNSZone,
+			EnablePrivateClusterPublicFQDN: s.ControlPlane.Spec.APIServerAccessProfile.EnablePrivateClusterPublicFQDN,
+		}
+	}
+
 	return managedClusterSpec, nil
 }
 
-// GetSystemAgentPoolSpecs gets a slice of azure.AgentPoolSpec for system agent pools.
-func (s *ManagedControlPlaneScope) GetSystemAgentPoolSpecs(ctx context.Context) ([]azure.AgentPoolSpec, error) {
-	if len(s.SystemNodePools) == 0 {
+// GetAgentPoolSpecs gets a slice of azure.AgentPoolSpec for the list of agent pools.
+func (s *ManagedControlPlaneScope) GetAgentPoolSpecs(ctx context.Context) ([]azure.AgentPoolSpec, error) {
+	if len(s.AllNodePools) == 0 {
 		opt1 := client.InNamespace(s.ControlPlane.Namespace)
 		opt2 := client.MatchingLabels(map[string]string{
-			infrav1exp.LabelAgentPoolMode: string(infrav1exp.NodePoolModeSystem),
-			clusterv1.ClusterLabelName:    s.Cluster.Name,
+			clusterv1.ClusterLabelName: s.Cluster.Name,
 		})
 
 		ammpList := &infrav1exp.AzureManagedMachinePoolList{}
@@ -440,16 +465,13 @@ func (s *ManagedControlPlaneScope) GetSystemAgentPoolSpecs(ctx context.Context) 
 			return nil, err
 		}
 
-		if ammpList == nil || len(ammpList.Items) == 0 {
-			return nil, errors.New("failed to fetch azuremanagedMachine pool with mode:System, require at least 1 system node pool")
-		}
-
-		s.SystemNodePools = ammpList.Items
+		s.AllNodePools = ammpList.Items
 	}
 
 	ammps := []azure.AgentPoolSpec{}
 
-	for _, pool := range s.SystemNodePools {
+	foundSystemPool := false
+	for _, pool := range s.AllNodePools {
 		// Fetch the owning MachinePool.
 
 		ownerPool, err := capiexputil.GetOwnerMachinePool(ctx, s.Client, pool.ObjectMeta)
@@ -462,11 +484,16 @@ func (s *ManagedControlPlaneScope) GetSystemAgentPoolSpecs(ctx context.Context) 
 			continue
 		}
 
+		if pool.Spec.Mode == string(infrav1exp.NodePoolModeSystem) {
+			foundSystemPool = true
+		}
+
 		ammp := azure.AgentPoolSpec{
-			Name:         pool.Name,
+			Name:         *pool.Spec.Name,
 			SKU:          pool.Spec.SKU,
 			Replicas:     1,
 			OSDiskSizeGB: 0,
+			Mode:         pool.Spec.Mode,
 		}
 
 		// Set optional values
@@ -478,7 +505,33 @@ func (s *ManagedControlPlaneScope) GetSystemAgentPoolSpecs(ctx context.Context) 
 			ammp.Replicas = *ownerPool.Spec.Replicas
 		}
 
+		if pool.Spec.VnetSubnetID != nil {
+			ammp.VnetSubnetID = *pool.Spec.VnetSubnetID
+		}
+
+		if pool.Spec.KubeletConfig != nil {
+			ammp.KubeletConfig = (*infrav1.KubeletConfig)(pool.Spec.KubeletConfig)
+		}
+
+		if pool.Spec.AutoScaling != nil {
+			ammp.EnableAutoScaling = to.BoolPtr(true)
+			ammp.MaxCount = pool.Spec.AutoScaling.MaxCount
+			ammp.MinCount = pool.Spec.AutoScaling.MinCount
+		}
+		ammp.EnableFIPS = pool.Spec.EnableFIPS
+		ammp.EnableNodePublicIP = pool.Spec.EnableNodePublicIP
+		ammp.AvailabilityZones = pool.Spec.AvailabilityZones
+		ammp.NodeLabels = pool.Spec.NodeLabels
+		ammp.NodeTaints = pool.Spec.NodeTaints
+		ammp.OsDiskType = pool.Spec.OsDiskType
+		ammp.ScaleSetPriority = pool.Spec.ScaleSetPriority
+		ammp.MaxPods = pool.Spec.MaxPods
+
 		ammps = append(ammps, ammp)
+	}
+
+	if !foundSystemPool {
+		return nil, errors.New("failed to fetch azuremanagedMachine pool with mode:System, require at least 1 system node pool")
 	}
 
 	return ammps, nil
@@ -498,7 +551,7 @@ func (s *ManagedControlPlaneScope) AgentPoolSpec() azure.AgentPoolSpec {
 	}
 
 	agentPoolSpec := azure.AgentPoolSpec{
-		Name:          s.InfraMachinePool.Name,
+		Name:          *s.InfraMachinePool.Spec.Name,
 		ResourceGroup: s.ControlPlane.Spec.ResourceGroupName,
 		Cluster:       s.ControlPlane.Name,
 		SKU:           s.InfraMachinePool.Spec.SKU,
@@ -516,6 +569,28 @@ func (s *ManagedControlPlaneScope) AgentPoolSpec() azure.AgentPoolSpec {
 	if s.InfraMachinePool.Spec.OSDiskSizeGB != nil {
 		agentPoolSpec.OSDiskSizeGB = *s.InfraMachinePool.Spec.OSDiskSizeGB
 	}
+
+	if s.InfraMachinePool.Spec.VnetSubnetID != nil {
+		agentPoolSpec.VnetSubnetID = *s.InfraMachinePool.Spec.VnetSubnetID
+	}
+
+	if s.InfraMachinePool.Spec.KubeletConfig != nil {
+		agentPoolSpec.KubeletConfig = (*infrav1.KubeletConfig)(s.InfraMachinePool.Spec.KubeletConfig)
+	}
+
+	if s.InfraMachinePool.Spec.AutoScaling != nil {
+		agentPoolSpec.EnableAutoScaling = to.BoolPtr(true)
+		agentPoolSpec.MaxCount = s.InfraMachinePool.Spec.AutoScaling.MaxCount
+		agentPoolSpec.MinCount = s.InfraMachinePool.Spec.AutoScaling.MinCount
+	}
+	agentPoolSpec.EnableFIPS = s.InfraMachinePool.Spec.EnableFIPS
+	agentPoolSpec.EnableNodePublicIP = s.InfraMachinePool.Spec.EnableNodePublicIP
+	agentPoolSpec.NodeLabels = s.InfraMachinePool.Spec.NodeLabels
+	agentPoolSpec.NodeTaints = s.InfraMachinePool.Spec.NodeTaints
+	agentPoolSpec.OsDiskType = s.InfraMachinePool.Spec.OsDiskType
+	agentPoolSpec.AvailabilityZones = s.InfraMachinePool.Spec.AvailabilityZones
+	agentPoolSpec.ScaleSetPriority = s.InfraMachinePool.Spec.ScaleSetPriority
+	agentPoolSpec.MaxPods = s.InfraMachinePool.Spec.MaxPods
 
 	return agentPoolSpec
 }
@@ -592,4 +667,50 @@ func (s *ManagedControlPlaneScope) UpdatePutStatus(condition clusterv1.Condition
 // UpdatePatchStatus updates a condition on the AzureManagedControlPlane status after a PATCH operation.
 func (s *ManagedControlPlaneScope) UpdatePatchStatus(condition clusterv1.ConditionType, service string, err error) {
 	// TODO: add condition to AzureManagedControlPlane status
+}
+
+// AnnotationJSON returns a map[string]interface from a JSON annotation.
+func (s *ManagedControlPlaneScope) AnnotationJSON(annotation string) (map[string]interface{}, error) {
+	out := map[string]interface{}{}
+	jsonAnnotation := s.ControlPlane.GetAnnotations()[annotation]
+	if len(jsonAnnotation) == 0 {
+		return out, nil
+	}
+	err := json.Unmarshal([]byte(jsonAnnotation), &out)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// UpdateAnnotationJSON updates the `annotation` with
+// `content`. `content` in this case should be a `map[string]interface{}`
+// suitable for turning into JSON. This `content` map will be marshalled into a
+// JSON string before being set as the given `annotation`.
+func (s *ManagedControlPlaneScope) UpdateAnnotationJSON(annotation string, content map[string]interface{}) error {
+	b, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	s.SetAnnotation(annotation, string(b))
+	return nil
+}
+
+// SetAnnotation sets a key value annotation on the ControlPlane.
+func (s *ManagedControlPlaneScope) SetAnnotation(key, value string) {
+	if s.ControlPlane.Annotations == nil {
+		s.ControlPlane.Annotations = map[string]string{}
+	}
+	s.ControlPlane.Annotations[key] = value
+}
+
+// TagsSpecs returns the tag specs for the ManagedControlPlane.
+func (s *ManagedControlPlaneScope) TagsSpecs() []azure.TagsSpec {
+	return []azure.TagsSpec{
+		{
+			Scope:      azure.ResourceGroupID(s.SubscriptionID(), s.ResourceGroup()),
+			Tags:       s.AdditionalTags(),
+			Annotation: infrav1.RGTagsLastAppliedAnnotation,
+		},
+	}
 }

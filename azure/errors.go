@@ -24,7 +24,7 @@ import (
 	"github.com/Azure/go-autorest/autorest"
 	"github.com/Azure/go-autorest/autorest/azure"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 )
 
 // ErrNotOwned is returned when a resource can't be deleted because it isn't owned.
@@ -89,7 +89,7 @@ func (t ReconcileError) Error() string {
 	}
 	switch t.errorType {
 	case TransientErrorType:
-		return fmt.Sprintf("transient reconcile error occurred: %s. Object will be requeued after %s", errStr, t.requestAfter.String())
+		return fmt.Sprintf("%s. Object will be requeued after %s", errStr, t.requestAfter.String())
 	case TerminalErrorType:
 		return fmt.Sprintf("reconcile error that cannot be recovered occurred: %s. Object will not be requeued", errStr)
 	default:

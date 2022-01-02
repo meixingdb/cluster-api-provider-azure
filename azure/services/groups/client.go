@@ -32,9 +32,10 @@ import (
 // client wraps go-sdk.
 type client interface {
 	Get(context.Context, string) (resources.Group, error)
-	CreateOrUpdateAsync(context.Context, azure.ResourceSpecGetter) (azureautorest.FutureAPI, error)
+	CreateOrUpdateAsync(context.Context, azure.ResourceSpecGetter) (interface{}, azureautorest.FutureAPI, error)
 	DeleteAsync(context.Context, azure.ResourceSpecGetter) (azureautorest.FutureAPI, error)
 	IsDone(context.Context, azureautorest.FutureAPI) (bool, error)
+	Result(context.Context, azureautorest.FutureAPI, string) (interface{}, error)
 }
 
 // azureClient contains the Azure go-sdk Client.
@@ -61,28 +62,28 @@ func newGroupsClient(subscriptionID string, baseURI string, authorizer autorest.
 
 // Get gets a resource group.
 func (ac *azureClient) Get(ctx context.Context, name string) (resources.Group, error) {
-	ctx, span := tele.Tracer().Start(ctx, "groups.AzureClient.Get")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "groups.AzureClient.Get")
+	defer done()
 
 	return ac.groups.Get(ctx, name)
 }
 
 // CreateOrUpdateAsync creates or updates a resource group.
 // Creating a resource group is not a long running operation, so we don't ever return a future.
-func (ac *azureClient) CreateOrUpdateAsync(ctx context.Context, spec azure.ResourceSpecGetter) (azureautorest.FutureAPI, error) {
-	ctx, span := tele.Tracer().Start(ctx, "groups.AzureClient.CreateOrUpdate")
-	defer span.End()
+func (ac *azureClient) CreateOrUpdateAsync(ctx context.Context, spec azure.ResourceSpecGetter) (interface{}, azureautorest.FutureAPI, error) {
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "groups.AzureClient.CreateOrUpdate")
+	defer done()
 
 	group, err := ac.resourceGroupParams(ctx, spec)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get desired parameters for group %s", spec.ResourceName())
+		return nil, nil, errors.Wrapf(err, "failed to get desired parameters for group %s", spec.ResourceName())
 	} else if group == nil {
 		// nothing to do here
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	_, err = ac.groups.CreateOrUpdate(ctx, spec.ResourceName(), *group)
-	return nil, err
+	result, err := ac.groups.CreateOrUpdate(ctx, spec.ResourceName(), *group)
+	return result, nil, err
 }
 
 // DeleteAsync deletes a resource group asynchronously. DeleteAsync sends a DELETE
@@ -91,8 +92,8 @@ func (ac *azureClient) CreateOrUpdateAsync(ctx context.Context, spec azure.Resou
 //
 // NOTE: When you delete a resource group, all of its resources are also deleted.
 func (ac *azureClient) DeleteAsync(ctx context.Context, spec azure.ResourceSpecGetter) (azureautorest.FutureAPI, error) {
-	ctx, span := tele.Tracer().Start(ctx, "groups.AzureClient.DeleteAsync")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "groups.AzureClient.Delete")
+	defer done()
 
 	future, err := ac.groups.Delete(ctx, spec.ResourceName())
 	if err != nil {
@@ -115,21 +116,27 @@ func (ac *azureClient) DeleteAsync(ctx context.Context, spec azure.ResourceSpecG
 
 // IsDone returns true if the long-running operation has completed.
 func (ac *azureClient) IsDone(ctx context.Context, future azureautorest.FutureAPI) (bool, error) {
-	ctx, span := tele.Tracer().Start(ctx, "groups.AzureClient.IsDone")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "groups.AzureClient.IsDone")
+	defer done()
 
-	done, err := future.DoneWithContext(ctx, ac.groups)
+	isDone, err := future.DoneWithContext(ctx, ac.groups)
 	if err != nil {
 		return false, errors.Wrap(err, "failed checking if the operation was complete")
 	}
 
-	return done, nil
+	return isDone, nil
+}
+
+// Result fetches the result of a long-running operation future.
+func (ac *azureClient) Result(ctx context.Context, futureData azureautorest.FutureAPI, futureType string) (interface{}, error) {
+	// Result is a no-op for resource groups as only Delete operations return a future.
+	return nil, nil
 }
 
 // resourceGroupParams returns the desired resource group parameters from the given spec.
 func (ac *azureClient) resourceGroupParams(ctx context.Context, spec azure.ResourceSpecGetter) (*resources.Group, error) {
-	ctx, span := tele.Tracer().Start(ctx, "groups.AzureClient.resourceGroupParams")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "groups.AzureClient.resourceGroupParams")
+	defer done()
 
 	var params interface{}
 

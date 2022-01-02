@@ -54,8 +54,8 @@ func New(scope NICScope, skuCache *resourceskus.Cache) *Service {
 
 // Reconcile gets/creates/updates a network interface.
 func (s *Service) Reconcile(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "networkinterfaces.Service.Reconcile")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "networkinterfaces.Service.Reconcile")
+	defer done()
 
 	for _, nicSpec := range s.Scope.NICSpecs() {
 		_, err := s.Client.Get(ctx, s.Scope.ResourceGroup(), nicSpec.Name)
@@ -163,11 +163,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 // Delete deletes the network interface with the provided name.
 func (s *Service) Delete(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "networkinterfaces.Service.Delete")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "networkinterfaces.Service.Delete")
+	defer done()
 
 	for _, nicSpec := range s.Scope.NICSpecs() {
-		s.Scope.V(2).Info("deleting network interface %s", "network interface", nicSpec.Name)
+		s.Scope.V(2).Info("deleting network interface", "network interface", nicSpec.Name)
 		err := s.Client.Delete(ctx, s.Scope.ResourceGroup(), nicSpec.Name)
 		if err != nil && !azure.ResourceNotFound(err) {
 			return errors.Wrapf(err, "failed to delete network interface %s in resource group %s", nicSpec.Name, s.Scope.ResourceGroup())

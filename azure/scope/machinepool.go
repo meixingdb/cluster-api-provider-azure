@@ -32,15 +32,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2/klogr"
 	"k8s.io/utils/pointer"
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/azure"
 	machinepool "sigs.k8s.io/cluster-api-provider-azure/azure/scope/strategies/machinepool_deployments"
-	infrav1exp "sigs.k8s.io/cluster-api-provider-azure/exp/api/v1alpha4"
+	infrav1exp "sigs.k8s.io/cluster-api-provider-azure/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/util/tele"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/controllers/noderefutil"
 	capierrors "sigs.k8s.io/cluster-api/errors"
-	capiv1exp "sigs.k8s.io/cluster-api/exp/api/v1alpha4"
+	capiv1exp "sigs.k8s.io/cluster-api/exp/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -117,23 +117,24 @@ func NewMachinePoolScope(params MachinePoolScopeParams) (*MachinePoolScope, erro
 // ScaleSetSpec returns the scale set spec.
 func (m *MachinePoolScope) ScaleSetSpec() azure.ScaleSetSpec {
 	return azure.ScaleSetSpec{
-		Name:                    m.Name(),
-		Size:                    m.AzureMachinePool.Spec.Template.VMSize,
-		Capacity:                int64(to.Int32(m.MachinePool.Spec.Replicas)),
-		SSHKeyData:              m.AzureMachinePool.Spec.Template.SSHPublicKey,
-		OSDisk:                  m.AzureMachinePool.Spec.Template.OSDisk,
-		DataDisks:               m.AzureMachinePool.Spec.Template.DataDisks,
-		SubnetName:              m.AzureMachinePool.Spec.Template.SubnetName,
-		VNetName:                m.Vnet().Name,
-		VNetResourceGroup:       m.Vnet().ResourceGroup,
-		PublicLBName:            m.OutboundLBName(infrav1.Node),
-		PublicLBAddressPoolName: azure.GenerateOutboundBackendAddressPoolName(m.OutboundLBName(infrav1.Node)),
-		AcceleratedNetworking:   m.AzureMachinePool.Spec.Template.AcceleratedNetworking,
-		Identity:                m.AzureMachinePool.Spec.Identity,
-		UserAssignedIdentities:  m.AzureMachinePool.Spec.UserAssignedIdentities,
-		SecurityProfile:         m.AzureMachinePool.Spec.Template.SecurityProfile,
-		SpotVMOptions:           m.AzureMachinePool.Spec.Template.SpotVMOptions,
-		FailureDomains:          m.MachinePool.Spec.FailureDomains,
+		Name:                         m.Name(),
+		Size:                         m.AzureMachinePool.Spec.Template.VMSize,
+		Capacity:                     int64(to.Int32(m.MachinePool.Spec.Replicas)),
+		SSHKeyData:                   m.AzureMachinePool.Spec.Template.SSHPublicKey,
+		OSDisk:                       m.AzureMachinePool.Spec.Template.OSDisk,
+		DataDisks:                    m.AzureMachinePool.Spec.Template.DataDisks,
+		SubnetName:                   m.AzureMachinePool.Spec.Template.SubnetName,
+		VNetName:                     m.Vnet().Name,
+		VNetResourceGroup:            m.Vnet().ResourceGroup,
+		PublicLBName:                 m.OutboundLBName(infrav1.Node),
+		PublicLBAddressPoolName:      azure.GenerateOutboundBackendAddressPoolName(m.OutboundLBName(infrav1.Node)),
+		AcceleratedNetworking:        m.AzureMachinePool.Spec.Template.AcceleratedNetworking,
+		Identity:                     m.AzureMachinePool.Spec.Identity,
+		UserAssignedIdentities:       m.AzureMachinePool.Spec.UserAssignedIdentities,
+		SecurityProfile:              m.AzureMachinePool.Spec.Template.SecurityProfile,
+		SpotVMOptions:                m.AzureMachinePool.Spec.Template.SpotVMOptions,
+		FailureDomains:               m.MachinePool.Spec.FailureDomains,
+		TerminateNotificationTimeout: m.AzureMachinePool.Spec.Template.TerminateNotificationTimeout,
 	}
 }
 
@@ -211,8 +212,8 @@ func (m MachinePoolScope) MaxSurge() (int, error) {
 // updateReplicasAndProviderIDs ties the Azure VMSS instance data and the Node status data together to build and update
 // the AzureMachinePool replica count and providerIDList.
 func (m *MachinePoolScope) updateReplicasAndProviderIDs(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.UpdateInstanceStatuses")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "scope.MachinePoolScope.UpdateInstanceStatuses")
+	defer done()
 
 	machines, err := m.getMachinePoolMachines(ctx)
 	if err != nil {
@@ -234,8 +235,11 @@ func (m *MachinePoolScope) updateReplicasAndProviderIDs(ctx context.Context) err
 }
 
 func (m *MachinePoolScope) getMachinePoolMachines(ctx context.Context) ([]infrav1exp.AzureMachinePoolMachine, error) {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.getMachinePoolMachines")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"scope.MachinePoolScope.getMachinePoolMachines",
+	)
+	defer done()
 
 	labels := map[string]string{
 		clusterv1.ClusterLabelName:      m.ClusterName(),
@@ -250,8 +254,11 @@ func (m *MachinePoolScope) getMachinePoolMachines(ctx context.Context) ([]infrav
 }
 
 func (m *MachinePoolScope) applyAzureMachinePoolMachines(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.applyAzureMachinePoolMachines")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"scope.MachinePoolScope.applyAzureMachinePoolMachines",
+	)
+	defer done()
 
 	if m.vmssState == nil {
 		m.Info("vmssState is nil")
@@ -492,16 +499,19 @@ func (m *MachinePoolScope) SetAnnotation(key, value string) {
 
 // PatchObject persists the machine spec and status.
 func (m *MachinePoolScope) PatchObject(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.PatchObject")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"scope.MachinePoolScope.PatchObject",
+	)
+	defer done()
 
 	return m.patchHelper.Patch(ctx, m.AzureMachinePool)
 }
 
 // Close the MachineScope by updating the machine spec, machine status.
 func (m *MachinePoolScope) Close(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.Close")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "scope.MachinePoolScope.Close")
+	defer done()
 
 	if m.vmssState != nil {
 		if err := m.applyAzureMachinePoolMachines(ctx); err != nil {
@@ -520,8 +530,11 @@ func (m *MachinePoolScope) Close(ctx context.Context) error {
 
 // GetBootstrapData returns the bootstrap data from the secret in the Machine's bootstrap.dataSecretName.
 func (m *MachinePoolScope) GetBootstrapData(ctx context.Context) (string, error) {
-	ctx, span := tele.Tracer().Start(ctx, "scope.MachinePoolScope.GetBootstrapData")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"scope.MachinePoolScope.GetBootstrapData",
+	)
+	defer done()
 
 	dataSecretName := m.MachinePool.Spec.Template.Spec.Bootstrap.DataSecretName
 	if dataSecretName == nil {
@@ -552,8 +565,9 @@ func (m *MachinePoolScope) GetVMImage() (*infrav1.Image, error) {
 		defaultImage *infrav1.Image
 	)
 	if m.AzureMachinePool.Spec.Template.OSDisk.OSType == azure.WindowsOS {
-		m.V(4).Info("No image specified for machine, using default Windows Image", "machine", m.MachinePool.GetName())
-		defaultImage, err = azure.GetDefaultWindowsImage(to.String(m.MachinePool.Spec.Template.Spec.Version))
+		runtime := m.AzureMachinePool.Annotations["runtime"]
+		m.V(4).Info("No image specified for machine, using default Windows Image", "machine", m.MachinePool.GetName(), "runtime", runtime)
+		defaultImage, err = azure.GetDefaultWindowsImage(to.String(m.MachinePool.Spec.Template.Spec.Version), runtime)
 	} else {
 		defaultImage, err = azure.GetDefaultUbuntuImage(to.String(m.MachinePool.Spec.Template.Spec.Version))
 	}
@@ -585,22 +599,15 @@ func (m *MachinePoolScope) RoleAssignmentSpecs() []azure.RoleAssignmentSpec {
 }
 
 // VMSSExtensionSpecs returns the vmss extension specs.
-func (m *MachinePoolScope) VMSSExtensionSpecs() []azure.VMSSExtensionSpec {
-	name, publisher, version := azure.GetBootstrappingVMExtension(m.AzureMachinePool.Spec.Template.OSDisk.OSType, m.CloudEnvironment())
-	if name != "" {
-		return []azure.VMSSExtensionSpec{
-			{
-				Name:         name,
-				ScaleSetName: m.Name(),
-				Publisher:    publisher,
-				Version:      version,
-				ProtectedSettings: map[string]string{
-					"commandToExecute": azure.BootstrapExtensionCommand(),
-				},
-			},
-		}
+func (m *MachinePoolScope) VMSSExtensionSpecs() []azure.ExtensionSpec {
+	var extensionSpecs = []azure.ExtensionSpec{}
+	extensionSpec := azure.GetBootstrappingVMExtension(m.AzureMachinePool.Spec.Template.OSDisk.OSType, m.CloudEnvironment(), m.Name())
+
+	if extensionSpec != nil {
+		extensionSpecs = append(extensionSpecs, *extensionSpec)
 	}
-	return []azure.VMSSExtensionSpec{}
+
+	return extensionSpecs
 }
 
 func (m *MachinePoolScope) getDeploymentStrategy() machinepool.TypedDeleteSelector {

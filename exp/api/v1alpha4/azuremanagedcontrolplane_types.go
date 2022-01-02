@@ -24,6 +24,14 @@ import (
 	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
 )
 
+const (
+	// PrivateDNSZoneModeSystem represents mode System for azuremanagedcontrolplane.
+	PrivateDNSZoneModeSystem string = "System"
+
+	// PrivateDNSZoneModeNone represents mode None for azuremanagedcontrolplane.
+	PrivateDNSZoneModeNone string = "None"
+)
+
 // AzureManagedControlPlaneSpec defines the desired state of AzureManagedControlPlane.
 type AzureManagedControlPlaneSpec struct {
 	// Version defines the desired Kubernetes version.
@@ -91,6 +99,14 @@ type AzureManagedControlPlaneSpec struct {
 	// SKU is the SKU of the AKS to be provisioned.
 	// +optional
 	SKU *SKU `json:"sku,omitempty"`
+
+	// LoadBalancerProfile is the profile of the cluster load balancer.
+	// +optional
+	LoadBalancerProfile *LoadBalancerProfile `json:"loadBalancerProfile,omitempty"`
+
+	// APIServerAccessProfile is the access profile for AKS API server.
+	// +optional
+	APIServerAccessProfile *APIServerAccessProfile `json:"apiServerAccessProfile,omitempty"`
 }
 
 // AADProfile - AAD integration managed by AKS.
@@ -109,6 +125,51 @@ type SKU struct {
 	// Tier - Tier of a managed cluster SKU.
 	// +kubebuilder:validation:Enum=Free;Paid
 	Tier string `json:"tier"`
+}
+
+// LoadBalancerProfile - Profile of the cluster load balancer.
+type LoadBalancerProfile struct {
+	// Load balancer profile must specify at most one of ManagedOutboundIPs, OutboundIPPrefixes and OutboundIPs.
+	// By default the AKS cluster automatically creates a public IP in the AKS-managed infrastructure resource group and assigns it to the load balancer outbound pool.
+	// Alternatively, you can assign your own custom public IP or public IP prefix at cluster creation time.
+	// See https://docs.microsoft.com/en-us/azure/aks/load-balancer-standard#provide-your-own-outbound-public-ips-or-prefixes
+
+	// ManagedOutboundIPs - Desired managed outbound IPs for the cluster load balancer.
+	// +optional
+	ManagedOutboundIPs *int32 `json:"managedOutboundIPs,omitempty"`
+
+	// OutboundIPPrefixes - Desired outbound IP Prefix resources for the cluster load balancer.
+	// +optional
+	OutboundIPPrefixes []string `json:"outboundIPPrefixes,omitempty"`
+
+	// OutboundIPs - Desired outbound IP resources for the cluster load balancer.
+	// +optional
+	OutboundIPs []string `json:"outboundIPs,omitempty"`
+
+	// AllocatedOutboundPorts - Desired number of allocated SNAT ports per VM. Allowed values must be in the range of 0 to 64000 (inclusive). The default value is 0 which results in Azure dynamically allocating ports.
+	// +optional
+	AllocatedOutboundPorts *int32 `json:"allocatedOutboundPorts,omitempty"`
+
+	// IdleTimeoutInMinutes - Desired outbound flow idle timeout in minutes. Allowed values must be in the range of 4 to 120 (inclusive). The default value is 30 minutes.
+	// +optional
+	IdleTimeoutInMinutes *int32 `json:"idleTimeoutInMinutes,omitempty"`
+}
+
+// APIServerAccessProfile - access profile for AKS API server.
+type APIServerAccessProfile struct {
+	// AuthorizedIPRanges - Authorized IP Ranges to kubernetes API server.
+	// +optional
+	AuthorizedIPRanges []string `json:"authorizedIPRanges,omitempty"`
+	// EnablePrivateCluster - Whether to create the cluster as a private cluster or not.
+	// +optional
+	EnablePrivateCluster *bool `json:"enablePrivateCluster,omitempty"`
+	// PrivateDNSZone - Private dns zone mode for private cluster.
+	// +kubebuilder:validation:Enum=System;None
+	// +optional
+	PrivateDNSZone *string `json:"privateDNSZone,omitempty"`
+	// EnablePrivateClusterPublicFQDN - Whether to create additional public FQDN for private cluster or not.
+	// +optional
+	EnablePrivateClusterPublicFQDN *bool `json:"enablePrivateClusterPublicFQDN,omitempty"`
 }
 
 // ManagedControlPlaneVirtualNetwork describes a virtual network required to provision AKS clusters.
@@ -144,7 +205,6 @@ type AzureManagedControlPlaneStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:path=azuremanagedcontrolplanes,scope=Namespaced,categories=cluster-api,shortName=amcp
-// +kubebuilder:storageversion
 // +kubebuilder:subresource:status
 
 // AzureManagedControlPlane is the Schema for the azuremanagedcontrolplanes API.

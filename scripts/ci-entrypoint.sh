@@ -29,8 +29,16 @@ cd "${REPO_ROOT}" || exit 1
 source "${REPO_ROOT}/hack/ensure-go.sh"
 # shellcheck source=hack/ensure-kind.sh
 source "${REPO_ROOT}/hack/ensure-kind.sh"
-# shellcheck source=hack/ensure-kubectl.sh
-source "${REPO_ROOT}/hack/ensure-kubectl.sh"
+
+# building kubectl from tools folder
+mkdir -p "${REPO_ROOT}/hack/tools/bin"
+KUBECTL=$(realpath hack/tools/bin/kubectl)
+# export the variable so it is available in bash -c wait_for_nodes below
+export KUBECTL
+make "${KUBECTL}" &>/dev/null
+echo "KUBECTL is set to ${KUBECTL}"
+
+
 # shellcheck source=hack/ensure-kustomize.sh
 source "${REPO_ROOT}/hack/ensure-kustomize.sh"
 # shellcheck source=hack/ensure-tags.sh
@@ -97,6 +105,12 @@ select_cluster_template() {
             export CLUSTER_TEMPLATE="${CLUSTER_TEMPLATE/custom-builds/custom-builds-machine-pool}"
         fi
     fi
+
+    # this requires k8s 1.22+
+    if [[ -n "${TEST_WINDOWS:-}" ]]; then
+        export WINDOWS_WORKER_MACHINE_COUNT="${WINDOWS_WORKER_MACHINE_COUNT:-2}"
+        export K8S_FEATURE_GATES="WindowsHostProcessContainers=true"
+    fi
 }
 
 create_cluster() {
@@ -108,17 +122,17 @@ wait_for_nodes() {
 
     # Ensure that all nodes are registered with the API server before checking for readiness
     local total_nodes="$((CONTROL_PLANE_MACHINE_COUNT + WORKER_MACHINE_COUNT))"
-    while [[ $(kubectl get nodes -ojson | jq '.items | length') -ne "${total_nodes}" ]]; do
+    while [[ $("${KUBECTL}" get nodes -ojson | jq '.items | length') -ne "${total_nodes}" ]]; do
         sleep 10
     done
 
-    kubectl wait --for=condition=Ready node --all --timeout=5m
-    kubectl get nodes -owide
+    "${KUBECTL}" wait --for=condition=Ready node --all --timeout=5m
+    "${KUBECTL}" get nodes -owide
 }
 
 # cleanup all resources we use
 cleanup() {
-    timeout 1800 kubectl delete cluster "${CLUSTER_NAME}" || true
+    timeout 1800 "${KUBECTL}" delete cluster "${CLUSTER_NAME}" || true
     make kind-reset || true
 }
 

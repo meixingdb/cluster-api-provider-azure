@@ -19,7 +19,7 @@ package groups
 import (
 	"github.com/Azure/azure-sdk-for-go/services/resources/mgmt/2019-05-01/resources"
 	"github.com/Azure/go-autorest/autorest/to"
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/azure/converters"
 )
 
@@ -51,16 +51,18 @@ func (s *GroupSpec) OwnerResourceName() string {
 func (s *GroupSpec) Parameters(existing interface{}) (interface{}, error) {
 	if existing != nil {
 		// rg already exists, nothing to update.
+		// Note that rg tags are updated separately using tags service.
 		return nil, nil
 	}
 	return resources.Group{
 		Location: to.StringPtr(s.Location),
+		// We create only CAPZ default tags. User defined additional tags
+		// are created and updated using tags service.
 		Tags: converters.TagsToMap(infrav1.Build(infrav1.BuildParams{
 			ClusterName: s.ClusterName,
 			Lifecycle:   infrav1.ResourceLifecycleOwned,
 			Name:        to.StringPtr(s.Name),
 			Role:        to.StringPtr(infrav1.CommonRole),
-			Additional:  s.AdditionalTags,
 		})),
 	}, nil
 }

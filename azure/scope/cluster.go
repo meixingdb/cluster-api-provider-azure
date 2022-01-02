@@ -18,6 +18,7 @@ package scope
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"strconv"
@@ -29,15 +30,17 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2/klogr"
 	"k8s.io/utils/net"
-	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha4"
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1beta1"
 	"sigs.k8s.io/cluster-api/util/conditions"
 	"sigs.k8s.io/cluster-api/util/patch"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/azure"
 	"sigs.k8s.io/cluster-api-provider-azure/azure/services/groups"
+	"sigs.k8s.io/cluster-api-provider-azure/azure/services/vnetpeerings"
 	"sigs.k8s.io/cluster-api-provider-azure/util/futures"
+	"sigs.k8s.io/cluster-api-provider-azure/util/tele"
 )
 
 // ClusterScopeParams defines the input parameters used to create a new Scope.
@@ -52,6 +55,9 @@ type ClusterScopeParams struct {
 // NewClusterScope creates a new Scope from the supplied parameters.
 // This is meant to be called for each reconcile iteration.
 func NewClusterScope(ctx context.Context, params ClusterScopeParams) (*ClusterScope, error) {
+	ctx, _, done := tele.StartSpanWithLogger(ctx, "azure.clusterScope.NewClusterScope")
+	defer done()
+
 	if params.Cluster == nil {
 		return nil, errors.New("failed to generate new scope from nil Cluster")
 	}
@@ -297,6 +303,33 @@ func (s *ClusterScope) GroupSpec() azure.ResourceSpecGetter {
 	}
 }
 
+// VnetPeeringSpecs returns the virtual network peering specs.
+func (s *ClusterScope) VnetPeeringSpecs() []azure.ResourceSpecGetter {
+	peeringSpecs := make([]azure.ResourceSpecGetter, 2*len(s.Vnet().Peerings))
+	for i, peering := range s.Vnet().Peerings {
+		forwardPeering := &vnetpeerings.VnetPeeringSpec{
+			PeeringName:         azure.GenerateVnetPeeringName(s.Vnet().Name, peering.RemoteVnetName),
+			SourceVnetName:      s.Vnet().Name,
+			SourceResourceGroup: s.Vnet().ResourceGroup,
+			RemoteVnetName:      peering.RemoteVnetName,
+			RemoteResourceGroup: peering.ResourceGroup,
+			SubscriptionID:      s.SubscriptionID(),
+		}
+		reversePeering := &vnetpeerings.VnetPeeringSpec{
+			PeeringName:         azure.GenerateVnetPeeringName(peering.RemoteVnetName, s.Vnet().Name),
+			SourceVnetName:      peering.RemoteVnetName,
+			SourceResourceGroup: peering.ResourceGroup,
+			RemoteVnetName:      s.Vnet().Name,
+			RemoteResourceGroup: s.Vnet().ResourceGroup,
+			SubscriptionID:      s.SubscriptionID(),
+		}
+		peeringSpecs[i*2] = forwardPeering
+		peeringSpecs[i*2+1] = reversePeering
+	}
+
+	return peeringSpecs
+}
+
 // VNetSpec returns the virtual network spec.
 func (s *ClusterScope) VNetSpec() azure.VNetSpec {
 	return azure.VNetSpec{
@@ -308,13 +341,24 @@ func (s *ClusterScope) VNetSpec() azure.VNetSpec {
 
 // PrivateDNSSpec returns the private dns zone spec.
 func (s *ClusterScope) PrivateDNSSpec() *azure.PrivateDNSSpec {
-	var spec *azure.PrivateDNSSpec
+	var specs *azure.PrivateDNSSpec
 	if s.IsAPIServerPrivate() {
-		spec = &azure.PrivateDNSSpec{
-			ZoneName:          s.GetPrivateDNSZoneName(),
+		links := make([]azure.PrivateDNSLinkSpec, 1+len(s.Vnet().Peerings))
+		links[0] = azure.PrivateDNSLinkSpec{
 			VNetName:          s.Vnet().Name,
 			VNetResourceGroup: s.Vnet().ResourceGroup,
 			LinkName:          azure.GenerateVNetLinkName(s.Vnet().Name),
+		}
+		for i, peering := range s.Vnet().Peerings {
+			links[i+1] = azure.PrivateDNSLinkSpec{
+				VNetName:          peering.RemoteVnetName,
+				VNetResourceGroup: peering.ResourceGroup,
+				LinkName:          azure.GenerateVNetLinkName(peering.RemoteVnetName),
+			}
+		}
+		specs = &azure.PrivateDNSSpec{
+			ZoneName: s.GetPrivateDNSZoneName(),
+			Links:    links,
 			Records: []infrav1.AddressRecord{
 				{
 					Hostname: azure.PrivateAPIServerHostname,
@@ -323,7 +367,8 @@ func (s *ClusterScope) PrivateDNSSpec() *azure.PrivateDNSSpec {
 			},
 		}
 	}
-	return spec
+
+	return specs
 }
 
 // BastionSpec returns the bastion spec.
@@ -554,6 +599,7 @@ func (s *ClusterScope) PatchObject(ctx context.Context) error {
 		conditions.WithConditions(
 			infrav1.ResourceGroupReadyCondition,
 			infrav1.NetworkInfrastructureReadyCondition,
+			infrav1.VnetPeeringReadyCondition,
 		),
 	)
 
@@ -564,6 +610,7 @@ func (s *ClusterScope) PatchObject(ctx context.Context) error {
 			clusterv1.ReadyCondition,
 			infrav1.ResourceGroupReadyCondition,
 			infrav1.NetworkInfrastructureReadyCondition,
+			infrav1.VnetPeeringReadyCondition,
 		}})
 }
 
@@ -603,6 +650,17 @@ func (s *ClusterScope) SetFailureDomain(id string, spec clusterv1.FailureDomainS
 		s.AzureCluster.Status.FailureDomains = make(clusterv1.FailureDomains)
 	}
 	s.AzureCluster.Status.FailureDomains[id] = spec
+}
+
+// FailureDomains returns the failure domains for the cluster.
+func (s *ClusterScope) FailureDomains() []string {
+	fds := make([]string, len(s.AzureCluster.Status.FailureDomains))
+	i := 0
+	for id := range s.AzureCluster.Status.FailureDomains {
+		fds[i] = id
+		i++
+	}
+	return fds
 }
 
 // SetControlPlaneSecurityRules sets the default security rules of the control plane subnet.
@@ -745,5 +803,51 @@ func (s *ClusterScope) UpdatePatchStatus(condition clusterv1.ConditionType, serv
 		conditions.MarkFalse(s.AzureCluster, condition, infrav1.UpdatingReason, clusterv1.ConditionSeverityInfo, "%s updating", service)
 	default:
 		conditions.MarkFalse(s.AzureCluster, condition, infrav1.FailedReason, clusterv1.ConditionSeverityError, "%s failed to update. err: %s", service, err.Error())
+	}
+}
+
+// AnnotationJSON returns a map[string]interface from a JSON annotation.
+func (s *ClusterScope) AnnotationJSON(annotation string) (map[string]interface{}, error) {
+	out := map[string]interface{}{}
+	jsonAnnotation := s.AzureCluster.GetAnnotations()[annotation]
+	if len(jsonAnnotation) == 0 {
+		return out, nil
+	}
+	err := json.Unmarshal([]byte(jsonAnnotation), &out)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// UpdateAnnotationJSON updates the `annotation` with
+// `content`. `content` in this case should be a `map[string]interface{}`
+// suitable for turning into JSON. This `content` map will be marshalled into a
+// JSON string before being set as the given `annotation`.
+func (s *ClusterScope) UpdateAnnotationJSON(annotation string, content map[string]interface{}) error {
+	b, err := json.Marshal(content)
+	if err != nil {
+		return err
+	}
+	s.SetAnnotation(annotation, string(b))
+	return nil
+}
+
+// SetAnnotation sets a key value annotation on the AzureCluster.
+func (s *ClusterScope) SetAnnotation(key, value string) {
+	if s.AzureCluster.Annotations == nil {
+		s.AzureCluster.Annotations = map[string]string{}
+	}
+	s.AzureCluster.Annotations[key] = value
+}
+
+// TagsSpecs returns the tag specs for the AzureCluster.
+func (s *ClusterScope) TagsSpecs() []azure.TagsSpec {
+	return []azure.TagsSpec{
+		{
+			Scope:      azure.ResourceGroupID(s.SubscriptionID(), s.ResourceGroup()),
+			Tags:       s.AdditionalTags(),
+			Annotation: infrav1.RGTagsLastAppliedAnnotation,
+		},
 	}
 }

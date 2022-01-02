@@ -4,7 +4,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.6.1
+    controller-gen.kubebuilder.io/version: v0.7.0
   creationTimestamp: null
   name: azuremanagedmachinepools.infrastructure.cluster.x-k8s.io
 spec:
@@ -117,6 +117,104 @@ spec:
             description: AzureManagedMachinePoolSpec defines the desired state of
               AzureManagedMachinePool.
             properties:
+              autoScaling:
+                description: EnableAutoScaling for AKS
+                properties:
+                  maxCount:
+                    description: MaxCount - Maximum number of nodes for auto-scaling
+                    format: int32
+                    type: integer
+                  minCount:
+                    description: MinCount - Minimum number of nodes for auto-scaling
+                    format: int32
+                    type: integer
+                required:
+                - maxCount
+                - minCount
+                type: object
+              availabilityZones:
+                description: AvailabilityZones - Availability zones for nodes. Must
+                  use VirtualMachineScaleSets AgentPoolType.
+                items:
+                  type: string
+                type: array
+              enableFIPS:
+                description: EnableFIPS - Whether to use FIPS enabled OS
+                type: boolean
+              enableNodePublicIP:
+                description: EnableNodePublicIP - Enable public IP for nodes
+                type: boolean
+              kubeletConfig:
+                description: KubeletConfig - KubeletConfig specifies the configuration
+                  of kubelet on agent nodes.
+                properties:
+                  allowedUnsafeSysctls:
+                    description: AllowedUnsafeSysctls - Allowlist of unsafe sysctls
+                      or unsafe sysctl patterns (ending in `*`).
+                    items:
+                      type: string
+                    type: array
+                  containerLogMaxFiles:
+                    description: ContainerLogMaxFiles - The maximum number of container
+                      log files that can be present for a container. The number must
+                      be ≥ 2.
+                    format: int32
+                    type: integer
+                  containerLogMaxSizeMB:
+                    description: ContainerLogMaxSizeMB - The maximum size (e.g. 10Mi)
+                      of container log file before it is rotated.
+                    format: int32
+                    type: integer
+                  cpuCfsQuota:
+                    description: CPUCfsQuota - Enable CPU CFS quota enforcement for
+                      containers that specify CPU limits.
+                    type: boolean
+                  cpuCfsQuotaPeriod:
+                    description: CPUCfsQuotaPeriod - Sets CPU CFS quota period value.
+                    type: string
+                  cpuManagerPolicy:
+                    description: CPUManagerPolicy - CPU Manager policy to use.
+                    enum:
+                    - none
+                    - static
+                    type: string
+                  failSwapOn:
+                    description: FailSwapOn - If set to true it will make the Kubelet
+                      fail to start if swap is enabled on the node.
+                    type: boolean
+                  imageGcHighThreshold:
+                    description: ImageGcHighThreshold - The percent of disk usage
+                      after which image garbage collection is always run.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  imageGcLowThreshold:
+                    description: ImageGcLowThreshold - The percent of disk usage before
+                      which image garbage collection is never run.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  podMaxPids:
+                    description: PodMaxPids - The maximum number of processes per
+                      pod.
+                    format: int32
+                    type: integer
+                  topologyManagerPolicy:
+                    description: TopologyManagerPolicy - Topology Manager policy to
+                      use.
+                    enum:
+                    - none
+                    - best-effort
+                    - restricted
+                    - single-numa-node
+                    type: string
+                type: object
+              maxPods:
+                description: MaxPods - Maximum number of pods that can run on a node.
+                format: int32
+                type: integer
               mode:
                 description: 'Mode - represents mode of an agent pool. Possible values
                   include: System, User.'
@@ -124,20 +222,271 @@ spec:
                 - System
                 - User
                 type: string
+              name:
+                description: Name - name of the agent pool. If not specified, CAPZ
+                  uses the name of the CR as the agent pool name.
+                type: string
+              nodeLabels:
+                additionalProperties:
+                  type: string
+                description: NodeLabels - Agent pool node labels to be persisted across
+                  all nodes in agent pool.
+                type: object
+              nodeTaints:
+                description: NodeTaints - Taints added to new nodes during node pool
+                  create and scale. For example, key=value:NoSchedule.
+                items:
+                  type: string
+                type: array
               osDiskSizeGB:
                 description: OSDiskSizeGB is the disk size for every machine in this
                   agent pool. If you specify 0, it will apply the default osDisk size
                   according to the vmSize specified.
                 format: int32
                 type: integer
+              osDiskType:
+                description: 'OsDiskType - OS disk type to be used for machines in
+                  a given agent pool. Allowed values are ''Ephemeral'' and ''Managed''.
+                  If unspecified, defaults to ''Ephemeral'' when the VM supports ephemeral
+                  OS and has a cache disk larger than the requested OSDiskSizeGB.
+                  Otherwise, defaults to ''Managed''. May not be changed after creation.
+                  Possible values include: ''Managed'', ''Ephemeral'''
+                enum:
+                - Managed
+                - Ephemeral
+                type: string
               providerIDList:
                 description: ProviderIDList is the unique identifier as specified
                   by the cloud provider.
                 items:
                   type: string
                 type: array
+              scaleSetPriority:
+                description: 'ScaleSetPriority - ScaleSetPriority to be used to specify
+                  virtual machine scale set priority. Default to regular. Possible
+                  values include: ''Spot'', ''Regular'''
+                enum:
+                - Regular
+                - Spot
+                type: string
               sku:
                 description: SKU is the size of the VMs in the node pool.
+                type: string
+              vnetSubnetID:
+                description: VnetSubnetID - VNet SubnetID specifies the VNet's subnet
+                  identifier for nodes and maybe pods
+                type: string
+            required:
+            - mode
+            - sku
+            type: object
+          status:
+            description: AzureManagedMachinePoolStatus defines the observed state
+              of AzureManagedMachinePool.
+            properties:
+              errorMessage:
+                description: Any transient errors that occur during the reconciliation
+                  of Machines can be added as events to the Machine object and/or
+                  logged in the controller's output.
+                type: string
+              errorReason:
+                description: Any transient errors that occur during the reconciliation
+                  of Machines can be added as events to the Machine object and/or
+                  logged in the controller's output.
+                type: string
+              ready:
+                description: Ready is true when the provider resource is ready.
+                type: boolean
+              replicas:
+                description: Replicas is the most recently observed number of replicas.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: false
+    subresources:
+      status: {}
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: AzureManagedMachinePool is the Schema for the azuremanagedmachinepools
+          API.
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AzureManagedMachinePoolSpec defines the desired state of
+              AzureManagedMachinePool.
+            properties:
+              autoScaling:
+                description: EnableAutoScaling for AKS
+                properties:
+                  maxCount:
+                    description: MaxCount - Maximum number of nodes for auto-scaling
+                    format: int32
+                    type: integer
+                  minCount:
+                    description: MinCount - Minimum number of nodes for auto-scaling
+                    format: int32
+                    type: integer
+                required:
+                - maxCount
+                - minCount
+                type: object
+              availabilityZones:
+                description: AvailabilityZones - Availability zones for nodes. Must
+                  use VirtualMachineScaleSets AgentPoolType.
+                items:
+                  type: string
+                type: array
+              enableFIPS:
+                description: EnableFIPS - Whether to use FIPS enabled OS
+                type: boolean
+              enableNodePublicIP:
+                description: EnableNodePublicIP - Enable public IP for nodes
+                type: boolean
+              kubeletConfig:
+                description: KubeletConfig - KubeletConfig specifies the configuration
+                  of kubelet on agent nodes.
+                properties:
+                  allowedUnsafeSysctls:
+                    description: AllowedUnsafeSysctls - Allowlist of unsafe sysctls
+                      or unsafe sysctl patterns (ending in `*`).
+                    items:
+                      type: string
+                    type: array
+                  containerLogMaxFiles:
+                    description: ContainerLogMaxFiles - The maximum number of container
+                      log files that can be present for a container. The number must
+                      be ≥ 2.
+                    format: int32
+                    type: integer
+                  containerLogMaxSizeMB:
+                    description: ContainerLogMaxSizeMB - The maximum size (e.g. 10Mi)
+                      of container log file before it is rotated.
+                    format: int32
+                    type: integer
+                  cpuCfsQuota:
+                    description: CPUCfsQuota - Enable CPU CFS quota enforcement for
+                      containers that specify CPU limits.
+                    type: boolean
+                  cpuCfsQuotaPeriod:
+                    description: CPUCfsQuotaPeriod - Sets CPU CFS quota period value.
+                    type: string
+                  cpuManagerPolicy:
+                    description: CPUManagerPolicy - CPU Manager policy to use.
+                    enum:
+                    - none
+                    - static
+                    type: string
+                  failSwapOn:
+                    description: FailSwapOn - If set to true it will make the Kubelet
+                      fail to start if swap is enabled on the node.
+                    type: boolean
+                  imageGcHighThreshold:
+                    description: ImageGcHighThreshold - The percent of disk usage
+                      after which image garbage collection is always run.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  imageGcLowThreshold:
+                    description: ImageGcLowThreshold - The percent of disk usage before
+                      which image garbage collection is never run.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
+                    type: integer
+                  podMaxPids:
+                    description: PodMaxPids - The maximum number of processes per
+                      pod.
+                    format: int32
+                    type: integer
+                  topologyManagerPolicy:
+                    description: TopologyManagerPolicy - Topology Manager policy to
+                      use.
+                    enum:
+                    - none
+                    - best-effort
+                    - restricted
+                    - single-numa-node
+                    type: string
+                type: object
+              maxPods:
+                description: MaxPods - Maximum number of pods that can run on a node.
+                format: int32
+                type: integer
+              mode:
+                description: 'Mode - represents mode of an agent pool. Possible values
+                  include: System, User.'
+                enum:
+                - System
+                - User
+                type: string
+              name:
+                description: Name - name of the agent pool. If not specified, CAPZ
+                  uses the name of the CR as the agent pool name.
+                type: string
+              nodeLabels:
+                additionalProperties:
+                  type: string
+                description: NodeLabels - Agent pool node labels to be persisted across
+                  all nodes in agent pool.
+                type: object
+              nodeTaints:
+                description: NodeTaints - Taints added to new nodes during node pool
+                  create and scale. For example, key=value:NoSchedule.
+                items:
+                  type: string
+                type: array
+              osDiskSizeGB:
+                description: OSDiskSizeGB is the disk size for every machine in this
+                  agent pool. If you specify 0, it will apply the default osDisk size
+                  according to the vmSize specified.
+                format: int32
+                type: integer
+              osDiskType:
+                description: 'OsDiskType - OS disk type to be used for machines in
+                  a given agent pool. Allowed values are ''Ephemeral'' and ''Managed''.
+                  If unspecified, defaults to ''Ephemeral'' when the VM supports ephemeral
+                  OS and has a cache disk larger than the requested OSDiskSizeGB.
+                  Otherwise, defaults to ''Managed''. May not be changed after creation.
+                  Possible values include: ''Managed'', ''Ephemeral'''
+                enum:
+                - Managed
+                - Ephemeral
+                type: string
+              providerIDList:
+                description: ProviderIDList is the unique identifier as specified
+                  by the cloud provider.
+                items:
+                  type: string
+                type: array
+              scaleSetPriority:
+                description: 'ScaleSetPriority - ScaleSetPriority to be used to specify
+                  virtual machine scale set priority. Default to regular. Possible
+                  values include: ''Spot'', ''Regular'''
+                enum:
+                - Regular
+                - Spot
+                type: string
+              sku:
+                description: SKU is the size of the VMs in the node pool.
+                type: string
+              vnetSubnetID:
+                description: VnetSubnetID - VNet SubnetID specifies the VNet's subnet
+                  identifier for nodes and maybe pods
                 type: string
             required:
             - mode

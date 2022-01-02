@@ -26,7 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 
-	infrav1alpha4 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1alpha4 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 	"sigs.k8s.io/cluster-api-provider-azure/azure"
 	"sigs.k8s.io/cluster-api-provider-azure/util/tele"
 )
@@ -59,8 +59,11 @@ func New(scope ManagedMachinePoolScope) *Service {
 
 // Reconcile idempotently creates or updates a agent pool, if possible.
 func (s *Service) Reconcile(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "agentpools.Service.Reconcile")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"agentpools.Service.Reconcile",
+	)
+	defer done()
 
 	agentPoolSpec := s.scope.AgentPoolSpec()
 
@@ -75,6 +78,28 @@ func (s *Service) Reconcile(ctx context.Context) error {
 			VnetSubnetID:        &agentPoolSpec.VnetSubnetID,
 			Mode:                containerservice.AgentPoolMode(agentPoolSpec.Mode),
 		},
+	}
+
+	if agentPoolSpec.EnableAutoScaling != nil {
+		profile.EnableAutoScaling = agentPoolSpec.EnableAutoScaling
+		profile.MaxCount = agentPoolSpec.MaxCount
+		profile.MinCount = agentPoolSpec.MinCount
+	}
+
+	profile.EnableFIPS = agentPoolSpec.EnableFIPS
+	profile.EnableNodePublicIP = agentPoolSpec.EnableNodePublicIP
+	profile.NodeLabels = agentPoolSpec.NodeLabels
+	profile.NodeTaints = &agentPoolSpec.NodeTaints
+	profile.AvailabilityZones = &agentPoolSpec.AvailabilityZones
+	profile.MaxPods = agentPoolSpec.MaxPods
+	if agentPoolSpec.OsDiskType != nil {
+		profile.OsDiskType = containerservice.OSDiskType(*agentPoolSpec.OsDiskType)
+	}
+	if agentPoolSpec.ScaleSetPriority != nil {
+		profile.ScaleSetPriority = containerservice.ScaleSetPriority(*agentPoolSpec.ScaleSetPriority)
+	}
+	if agentPoolSpec.KubeletConfig != nil {
+		profile.KubeletConfig = (*containerservice.KubeletConfig)(agentPoolSpec.KubeletConfig)
 	}
 
 	existingPool, err := s.Client.Get(ctx, agentPoolSpec.ResourceGroup, agentPoolSpec.Cluster, agentPoolSpec.Name)
@@ -106,6 +131,10 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				Count:               existingPool.Count,
 				OrchestratorVersion: existingPool.OrchestratorVersion,
 				Mode:                existingPool.Mode,
+				MaxCount:            existingPool.MaxCount,
+				MinCount:            existingPool.MinCount,
+				EnableAutoScaling:   existingPool.EnableAutoScaling,
+				NodeLabels:          existingPool.NodeLabels,
 			},
 		}
 
@@ -114,6 +143,10 @@ func (s *Service) Reconcile(ctx context.Context) error {
 				Count:               profile.Count,
 				OrchestratorVersion: profile.OrchestratorVersion,
 				Mode:                profile.Mode,
+				MaxCount:            profile.MaxCount,
+				MinCount:            profile.MinCount,
+				EnableAutoScaling:   profile.EnableAutoScaling,
+				NodeLabels:          profile.NodeLabels,
 			},
 		}
 
@@ -135,8 +168,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 // Delete deletes the virtual network with the provided name.
 func (s *Service) Delete(ctx context.Context) error {
-	ctx, span := tele.Tracer().Start(ctx, "agentpools.Service.Delete")
-	defer span.End()
+	ctx, _, done := tele.StartSpanWithLogger(
+		ctx,
+		"agentpools.Service.Delete",
+	)
+	defer done()
 
 	agentPoolSpec := s.scope.AgentPoolSpec()
 

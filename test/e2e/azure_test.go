@@ -25,6 +25,8 @@ import (
 	"path/filepath"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+
 	"sigs.k8s.io/cluster-api/util"
 
 	. "github.com/onsi/ginkgo"
@@ -61,7 +63,15 @@ var _ = Describe("Workload cluster creation", func() {
 		Expect(os.MkdirAll(artifactFolder, 0755)).To(Succeed(), "Invalid argument. artifactFolder can't be created for %s spec", specName)
 		Expect(e2eConfig.Variables).To(HaveKey(capi_e2e.KubernetesVersion))
 
-		clusterNamePrefix = fmt.Sprintf("capz-e2e-%s", util.RandomString(6))
+		// CLUSTER_NAME and CLUSTER_NAMESPACE allows for testing existing clusters
+		// if CLUSTER_NAMESPACE is set don't generate a new prefix otherwise
+		// the correct namespace won't be found and a new cluster will be created
+		clusterNameSpace := os.Getenv("CLUSTER_NAMESPACE")
+		if clusterNameSpace == "" {
+			clusterNamePrefix = fmt.Sprintf("capz-e2e-%s", util.RandomString(6))
+		} else {
+			clusterNamePrefix = clusterNameSpace
+		}
 
 		// Setup a Namespace where to host objects for this spec and create a watcher for the namespace events.
 		var err error
@@ -82,8 +92,17 @@ var _ = Describe("Workload cluster creation", func() {
 			Type: corev1.SecretTypeOpaque,
 			Data: map[string][]byte{"clientSecret": []byte(spClientSecret)},
 		}
-		err = bootstrapClusterProxy.GetClient().Create(ctx, secret)
-		Expect(err).ToNot(HaveOccurred())
+		_, err = bootstrapClusterProxy.GetClientSet().CoreV1().Secrets(namespace.Name).Get(ctx, secret.Name, metav1.GetOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			Expect(err).ShouldNot(HaveOccurred())
+		}
+		if err != nil {
+			Logf("Creating cluster identity secret", secret.Name)
+			err = bootstrapClusterProxy.GetClient().Create(ctx, secret)
+			Expect(err).ToNot(HaveOccurred())
+		} else {
+			Logf("Using existing cluster identity secret")
+		}
 
 		identityName := e2eConfig.GetVariable(ClusterIdentityName)
 		Expect(os.Setenv(ClusterIdentityName, identityName)).NotTo(HaveOccurred())
@@ -114,6 +133,9 @@ var _ = Describe("Workload cluster creation", func() {
 		Expect(os.Unsetenv(AzureResourceGroup)).NotTo(HaveOccurred())
 		Expect(os.Unsetenv(AzureVNetName)).NotTo(HaveOccurred())
 
+		Expect(os.Unsetenv("WINDOWS_WORKER_MACHINE_COUNT")).To(Succeed())
+		Expect(os.Unsetenv("K8S_FEATURE_GATES")).To(Succeed())
+
 		logCheckpoint(specTimes)
 	})
 
@@ -122,15 +144,14 @@ var _ = Describe("Workload cluster creation", func() {
 			It("Creates a public management cluster in the same vnet", func() {
 				clusterName = getClusterName(clusterNamePrefix, "public-custom-vnet")
 				Context("Creating a custom virtual network", func() {
-					Expect(os.Setenv(AzureVNetName, "custom-vnet")).NotTo(HaveOccurred())
-					cpCIDR := "10.128.0.0/16"
-					Expect(os.Setenv(AzureCPSubnetCidr, cpCIDR)).NotTo(HaveOccurred())
-					nodeCIDR := "10.129.0.0/16"
-					Expect(os.Setenv(AzureNodeSubnetCidr, nodeCIDR)).NotTo(HaveOccurred())
+					Expect(os.Setenv(AzureCustomVNetName, "custom-vnet")).NotTo(HaveOccurred())
 					additionalCleanup = SetupExistingVNet(ctx,
-						"10.0.0.0/8",
-						map[string]string{fmt.Sprintf("%s-controlplane-subnet", clusterName): "10.0.0.0/16", "private-cp-subnet": cpCIDR},
-						map[string]string{fmt.Sprintf("%s-node-subnet", clusterName): "10.1.0.0/16", "private-node-subnet": nodeCIDR})
+						"10.0.0.0/16",
+						map[string]string{fmt.Sprintf("%s-controlplane-subnet", os.Getenv(AzureCustomVNetName)): "10.0.0.0/24"},
+						map[string]string{fmt.Sprintf("%s-node-subnet", os.Getenv(AzureCustomVNetName)): "10.0.1.0/24"},
+						fmt.Sprintf("%s-azure-bastion-subnet", os.Getenv(AzureCustomVNetName)),
+						"10.0.2.0/24",
+					)
 				})
 
 				clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
@@ -181,8 +202,13 @@ var _ = Describe("Workload cluster creation", func() {
 		fmt.Fprintf(GinkgoWriter, "INFO: skipping test requires pushing container images to external repository")
 	}
 
-	It("With 3 control-plane nodes and 2 worker nodes", func() {
+	It("With 3 control-plane nodes and 2 Linux and 2 Windows worker nodes", func() {
 		clusterName = getClusterName(clusterNamePrefix, "ha")
+
+		// Opt into using windows with prow template
+		Expect(os.Setenv("WINDOWS_WORKER_MACHINE_COUNT", "2")).To(Succeed())
+		Expect(os.Setenv("K8S_FEATURE_GATES", "WindowsHostProcessContainers=true")).To(Succeed())
+
 		clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
 			ClusterProxy: bootstrapClusterProxy,
 			ConfigCluster: clusterctl.ConfigClusterInput{
@@ -244,6 +270,18 @@ var _ = Describe("Workload cluster creation", func() {
 				}
 			})
 		})
+
+		Context("Creating an accessible load balancer for windows", func() {
+			AzureLBSpec(ctx, func() AzureLBSpecInput {
+				return AzureLBSpecInput{
+					BootstrapClusterProxy: bootstrapClusterProxy,
+					Namespace:             namespace,
+					ClusterName:           clusterName,
+					SkipCleanup:           skipCleanup,
+					Windows:               true,
+				}
+			})
+		})
 	})
 
 	Context("Creating a ipv6 control-plane cluster", func() {
@@ -293,8 +331,13 @@ var _ = Describe("Workload cluster creation", func() {
 	})
 
 	Context("Creating a VMSS cluster", func() {
-		It("with a single control plane node and an AzureMachinePool with 2 nodes", func() {
+		It("with a single control plane node and an AzureMachinePool with 2 Linux and 2 Windows worker nodes", func() {
 			clusterName = getClusterName(clusterNamePrefix, "vmss")
+
+			// Opt into using windows with prow template
+			Expect(os.Setenv("WINDOWS_WORKER_MACHINE_COUNT", "2")).To(Succeed())
+			Expect(os.Setenv("K8S_FEATURE_GATES", "WindowsHostProcessContainers=true")).To(Succeed())
+
 			clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{
 				ClusterProxy: bootstrapClusterProxy,
 				ConfigCluster: clusterctl.ConfigClusterInput{
@@ -331,6 +374,18 @@ var _ = Describe("Workload cluster creation", func() {
 						Namespace:             namespace,
 						ClusterName:           clusterName,
 						SkipCleanup:           skipCleanup,
+					}
+				})
+			})
+
+			Context("Creating an accessible load balancer for windows", func() {
+				AzureLBSpec(ctx, func() AzureLBSpecInput {
+					return AzureLBSpecInput{
+						BootstrapClusterProxy: bootstrapClusterProxy,
+						Namespace:             namespace,
+						ClusterName:           clusterName,
+						SkipCleanup:           skipCleanup,
+						Windows:               true,
 					}
 				})
 			})
@@ -472,7 +527,7 @@ var _ = Describe("Workload cluster creation", func() {
 		})
 	})
 
-	Context("Creating a Windows Enabled cluster", func() {
+	Context("Creating a Windows Enabled cluster with dockershim", func() {
 		// Requires 3 control planes due to https://github.com/kubernetes-sigs/cluster-api-provider-azure/issues/857
 		It("With 3 control-plane nodes and 1 Linux worker node and 1 Windows worker node", func() {
 			clusterName = getClusterName(clusterNamePrefix, "win-ha")
@@ -520,7 +575,7 @@ var _ = Describe("Workload cluster creation", func() {
 		})
 	})
 
-	Context("Creating a Windows enabled VMSS cluster", func() {
+	Context("Creating a Windows enabled VMSS cluster with dockershim", func() {
 		It("with a single control plane node and an Linux AzureMachinePool with 1 nodes and Windows AzureMachinePool with 1 node", func() {
 			clusterName = getClusterName(clusterNamePrefix, "win-vmss")
 			clusterctl.ApplyClusterTemplateAndWait(ctx, clusterctl.ApplyClusterTemplateAndWaitInput{

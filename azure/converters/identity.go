@@ -24,11 +24,34 @@ import (
 	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2021-04-01/compute"
 	"github.com/pkg/errors"
 
-	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
+	infrav1 "sigs.k8s.io/cluster-api-provider-azure/api/v1beta1"
 )
 
 // ErrUserAssignedIdentitiesNotFound is the error thrown when user assigned identities is not passed with the identity type being UserAssigned.
 var ErrUserAssignedIdentitiesNotFound = errors.New("the user-assigned identity provider ids must not be null or empty for 'UserAssigned' identity type")
+
+// VMIdentityToVMSDK converts CAPZ VM identity to Azure SDK identity.
+func VMIdentityToVMSDK(identity infrav1.VMIdentity, uami []infrav1.UserAssignedIdentity) (*compute.VirtualMachineIdentity, error) {
+	if identity == infrav1.VMIdentitySystemAssigned {
+		return &compute.VirtualMachineIdentity{
+			Type: compute.ResourceIdentityTypeSystemAssigned,
+		}, nil
+	}
+
+	if identity == infrav1.VMIdentityUserAssigned {
+		userIdentitiesMap, err := UserAssignedIdentitiesToVMSDK(uami)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to assign VM identity")
+		}
+
+		return &compute.VirtualMachineIdentity{
+			Type:                   compute.ResourceIdentityTypeUserAssigned,
+			UserAssignedIdentities: userIdentitiesMap,
+		}, nil
+	}
+
+	return nil, nil
+}
 
 // UserAssignedIdentitiesToVMSDK converts CAPZ user assigned identities associated with the Virtual Machine to Azure SDK identities
 // The user identity dictionary key references will be ARM resource ids in the form:

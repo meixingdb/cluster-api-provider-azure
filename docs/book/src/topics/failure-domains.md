@@ -17,7 +17,7 @@ Full details of availability zones, regions can be found in the [Azure docs](htt
 By default, only control plane machines get automatically spread to all cluster zones. A workaround for spreading worker machines is to create N `MachineDeployments` for your N failure domains, scaling them independently. Resiliency to failures comes through having multiple `MachineDeployments` (see below).
 
 ```yaml
-apiVersion: cluster.x-k8s.io/v1alpha4
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
   name: ${CLUSTER_NAME}-md-0
@@ -31,18 +31,18 @@ spec:
     spec:
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
           name: ${CLUSTER_NAME}-md-0
       clusterName: ${CLUSTER_NAME}
       infrastructureRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
         kind: AzureMachineTemplate
         name: ${CLUSTER_NAME}-md-0
       version: ${KUBERNETES_VERSION}
       failureDomain: "1"
 ---
-apiVersion: cluster.x-k8s.io/v1alpha4
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
   name: ${CLUSTER_NAME}-md-1
@@ -56,18 +56,18 @@ spec:
     spec:
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
           name: ${CLUSTER_NAME}-md-1
       clusterName: ${CLUSTER_NAME}
       infrastructureRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
         kind: AzureMachineTemplate
         name: ${CLUSTER_NAME}-md-1
       version: ${KUBERNETES_VERSION}
       failureDomain: "2"
 ---
-apiVersion: cluster.x-k8s.io/v1alpha4
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: MachineDeployment
 metadata:
   name: ${CLUSTER_NAME}-md-2
@@ -81,12 +81,12 @@ spec:
     spec:
       bootstrap:
         configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
           kind: KubeadmConfigTemplate
           name: ${CLUSTER_NAME}-md-2
       clusterName: ${CLUSTER_NAME}
       infrastructureRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
         kind: AzureMachineTemplate
         name: ${CLUSTER_NAME}-md-2
       version: ${KUBERNETES_VERSION}
@@ -101,12 +101,12 @@ The `AzureMachine` controller looks for a failure domain (i.e. availability zone
 
 If you would rather control the placement of virtual machines into a failure domain (i.e. availability zones) then you can explicitly state the failure domain. The best way is to specify this using the **FailureDomain** field within the `Machine` (or `MachineDeployment`) spec.
 
-> **DEPRECATION NOTE**: Failure domains were introduced in v1alpha3. Prior to this you might have used the **AvailabilityZone** on the `AzureMachine`. This has been deprecated in v1alpha3, and now removed in v1alpha4. Please update your definitions and use **FailureDomain** instead.
+> **DEPRECATION NOTE**: Failure domains were introduced in v1alpha3. Prior to this you might have used the **AvailabilityZone** on the `AzureMachine`. This has been deprecated in v1alpha3, and now removed in v1beta1. Please update your definitions and use **FailureDomain** instead.
 
 For example:
 
 ```yaml
-apiVersion: cluster.x-k8s.io/v1alpha4
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: Machine
 metadata:
   labels:
@@ -120,11 +120,11 @@ spec:
   failureDomain: "1"
   bootstrap:
     configRef:
-        apiVersion: bootstrap.cluster.x-k8s.io/v1alpha4
+        apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
         kind: KubeadmConfigTemplate
         name: my-cluster-md-0
   infrastructureRef:
-    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha4
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
     kind: AzureMachineTemplate
     name: my-cluster-md-0
 
@@ -188,7 +188,7 @@ When cluster api detects that the region has no failure domains, it creates avai
 The availability sets created are as follows:
 
 1. For control plane vms, an availability set will be created and suffixed with the string "control-plane".
-2. For Worker node vms, an availability set will be created for each machine deployment, and suffixed with the machine deployment name.
+2. For worker node vms, an availability set will be created for each machine deployment or machine set, and suffixed with the name of the machine deployment or machine set. Important note: make sure that the machine deployment's `Spec.Template.Labels` field includes the `"cluster.x-k8s.io/deployment-name"` label. It will not have this label by default if the machine deployment was created with a custom `Spec.Selector.MatchLabels` field. A machine set should have a `Spec.Template.Labels` field which includes `"cluster.x-k8s.io/set-name"`.
 
 Consider the following cluster configuration:
 

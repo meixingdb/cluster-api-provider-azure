@@ -26,7 +26,6 @@ import (
 	autorest "github.com/Azure/go-autorest/autorest"
 	logr "github.com/go-logr/logr"
 	gomock "github.com/golang/mock/gomock"
-	v1alpha4 "sigs.k8s.io/cluster-api-provider-azure/api/v1alpha4"
 	azure "sigs.k8s.io/cluster-api-provider-azure/azure"
 )
 
@@ -51,20 +50,6 @@ func NewMockTagScope(ctrl *gomock.Controller) *MockTagScope {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockTagScope) EXPECT() *MockTagScopeMockRecorder {
 	return m.recorder
-}
-
-// AdditionalTags mocks base method.
-func (m *MockTagScope) AdditionalTags() v1alpha4.Tags {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AdditionalTags")
-	ret0, _ := ret[0].(v1alpha4.Tags)
-	return ret0
-}
-
-// AdditionalTags indicates an expected call of AdditionalTags.
-func (mr *MockTagScopeMockRecorder) AdditionalTags() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdditionalTags", reflect.TypeOf((*MockTagScope)(nil).AdditionalTags))
 }
 
 // AnnotationJSON mocks base method.
@@ -94,20 +79,6 @@ func (m *MockTagScope) Authorizer() autorest.Authorizer {
 func (mr *MockTagScopeMockRecorder) Authorizer() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Authorizer", reflect.TypeOf((*MockTagScope)(nil).Authorizer))
-}
-
-// AvailabilitySetEnabled mocks base method.
-func (m *MockTagScope) AvailabilitySetEnabled() bool {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AvailabilitySetEnabled")
-	ret0, _ := ret[0].(bool)
-	return ret0
-}
-
-// AvailabilitySetEnabled indicates an expected call of AvailabilitySetEnabled.
-func (mr *MockTagScopeMockRecorder) AvailabilitySetEnabled() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AvailabilitySetEnabled", reflect.TypeOf((*MockTagScope)(nil).AvailabilitySetEnabled))
 }
 
 // BaseURI mocks base method.
@@ -164,20 +135,6 @@ func (m *MockTagScope) CloudEnvironment() string {
 func (mr *MockTagScopeMockRecorder) CloudEnvironment() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloudEnvironment", reflect.TypeOf((*MockTagScope)(nil).CloudEnvironment))
-}
-
-// CloudProviderConfigOverrides mocks base method.
-func (m *MockTagScope) CloudProviderConfigOverrides() *v1alpha4.CloudProviderConfigOverrides {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CloudProviderConfigOverrides")
-	ret0, _ := ret[0].(*v1alpha4.CloudProviderConfigOverrides)
-	return ret0
-}
-
-// CloudProviderConfigOverrides indicates an expected call of CloudProviderConfigOverrides.
-func (mr *MockTagScopeMockRecorder) CloudProviderConfigOverrides() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloudProviderConfigOverrides", reflect.TypeOf((*MockTagScope)(nil).CloudProviderConfigOverrides))
 }
 
 // ClusterName mocks base method.
@@ -254,34 +211,6 @@ func (mr *MockTagScopeMockRecorder) Info(msg interface{}, keysAndValues ...inter
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{msg}, keysAndValues...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Info", reflect.TypeOf((*MockTagScope)(nil).Info), varargs...)
-}
-
-// Location mocks base method.
-func (m *MockTagScope) Location() string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Location")
-	ret0, _ := ret[0].(string)
-	return ret0
-}
-
-// Location indicates an expected call of Location.
-func (mr *MockTagScopeMockRecorder) Location() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Location", reflect.TypeOf((*MockTagScope)(nil).Location))
-}
-
-// ResourceGroup mocks base method.
-func (m *MockTagScope) ResourceGroup() string {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ResourceGroup")
-	ret0, _ := ret[0].(string)
-	return ret0
-}
-
-// ResourceGroup indicates an expected call of ResourceGroup.
-func (mr *MockTagScopeMockRecorder) ResourceGroup() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResourceGroup", reflect.TypeOf((*MockTagScope)(nil).ResourceGroup))
 }
 
 // SubscriptionID mocks base method.
